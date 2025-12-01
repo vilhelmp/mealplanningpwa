@@ -1,0 +1,8 @@
+{
+  "name": "HomeChef Hub",
+  "description": "A privacy-focused, Nordic-style Meal Planning and Shopping PWA with AI capabilities.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
