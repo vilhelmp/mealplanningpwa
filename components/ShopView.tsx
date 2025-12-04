@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { ShoppingItem, Language, AppSettings, SHOPPING_CATEGORIES, MealPlanItem, Recipe } from '../types';
 import { Card, Button, Icons, Input, Modal } from './Shared';
 import { mergeShoppingList } from '../services/mockData';
+import { CATEGORY_TRANSLATIONS } from '../services/translations';
 
 interface ShopViewProps {
   items: ShoppingItem[]; // Global persisted items (manual + aggregated)
@@ -13,51 +14,15 @@ interface ShopViewProps {
   onUpdateCategory: (id: number, category: string) => void;
   onUpdateItem: (id: number, updates: Partial<ShoppingItem>) => void;
   onClearChecked: () => void;
-  language: Language;
+  language: string;
+  t: any;
 }
-
-const TRANSLATIONS = {
-  [Language.EN]: {
-    title: "Shopping",
-    remaining: "items", // Shortened
-    clear: "Clear", // Shortened
-    placeholder: "Add item...",
-    empty: "Your list is empty.",
-    moveTitle: "Move Item",
-    selectCategory: "Select new category for",
-    save: "Save",
-    cancel: "Cancel",
-    itemName: "Item Name",
-    quantity: "Quantity",
-    unit: "Unit",
-    allStores: "Default View",
-    thisWeek: "This Week",
-    nextWeek: "Next Week"
-  },
-  [Language.SV]: {
-    title: "Inköpslista",
-    remaining: "kvar", // Shortened
-    clear: "Rensa", // Shortened
-    placeholder: "Lägg till vara...",
-    empty: "Din lista är tom.",
-    moveTitle: "Flytta vara",
-    selectCategory: "Välj ny kategori för",
-    save: "Spara",
-    cancel: "Avbryt",
-    itemName: "Namn",
-    quantity: "Antal",
-    unit: "Enhet",
-    allStores: "Standardvy",
-    thisWeek: "Denna vecka",
-    nextWeek: "Nästa vecka"
-  }
-};
 
 const UNITS = [
     'pc', 'st', 'pkt', 'g', 'kg', 'ml', 'cl', 'dl', 'l', 'tsp', 'tbsp', 'cup', 'can', 'jar', 'bunch', 'pinch'
 ];
 
-export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settings, onToggleItem, onAddItem, onUpdateCategory, onUpdateItem, onClearChecked, language }) => {
+export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settings, onToggleItem, onAddItem, onUpdateCategory, onUpdateItem, onClearChecked, language, t }) => {
   const [newItemName, setNewItemName] = useState('');
   
   // Accordion state: only one item expanded at a time
@@ -79,8 +44,6 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
 
   // Week Selection State (0 = This week, 1 = Next week)
   const [weekOffset, setWeekOffset] = useState(0);
-
-  const t = TRANSLATIONS[language];
 
   // --- Dynamic Filtering Logic ---
   
@@ -108,27 +71,6 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
           return d >= startDate && d < endDate;
       });
 
-      // We use the merge utility to recalculate quantity based on the filtered plan.
-      // Crucially, we pass `items` as the current list so we preserve:
-      // 1. Manual items (always shown)
-      // 2. Checked status (mapped by name)
-      // 3. Category overrides (mapped by ID in the original list, but merge logic matches by name)
-      
-      // Note: The `items` prop passed in ALREADY contains the merged result of ALL plans. 
-      // To strictly show only this week's ingredients + manual items, we need to re-run merge 
-      // starting with ONLY manual items from the global list, but preserving checked state from global list.
-      
-      const manualItems = items.filter(i => i.is_manually_added);
-      
-      // We need a way to preserve the 'checked' status of ingredients that might appear in this week.
-      // The `mergeShoppingList` function handles check-preservation if we pass the global list as first arg,
-      // BUT it appends quantities. 
-      // Trick: We pass the global list, but we filter the plan. `mergeShoppingList` logic is:
-      // 1. Keep manual items from current list.
-      // 2. Generate new items from plan.
-      // 3. If item exists in generated map (by name), accumulate.
-      // 4. If item existed in current list, copy checked status.
-      
       return mergeShoppingList(items, visiblePlan, recipes, settings.pantry_staples);
 
   }, [items, plan, recipes, settings.pantry_staples, weekOffset]);
@@ -212,6 +154,13 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
       visibleItems.some(i => i.category === cat)
   );
 
+  const getCategoryLabel = (cat: string) => {
+      if (CATEGORY_TRANSLATIONS[language]) {
+          return CATEGORY_TRANSLATIONS[language][cat] || cat;
+      }
+      return cat;
+  }
+
   const renderCategory = (cat: string) => {
     // Sort items alphabetically within the category
     const catItems = visibleItems
@@ -222,7 +171,7 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
 
     return (
       <div key={cat} className="mb-3">
-        <h3 className="text-[10px] font-bold text-nordic-muted uppercase tracking-wider mb-1 px-1">{cat}</h3>
+        <h3 className="text-[10px] font-bold text-nordic-muted uppercase tracking-wider mb-1 px-1">{getCategoryLabel(cat)}</h3>
         <Card className="divide-y divide-gray-100">
           {catItems.map(item => {
             const isExpanded = expandedItemId === item.id;
@@ -367,7 +316,7 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
     <div className="pb-24 space-y-3">
        <div className="flex items-center justify-between px-1">
         <div className="flex items-baseline gap-2">
-          <h1 className="text-xl font-bold text-nordic-text">{t.title}</h1>
+          <h1 className="text-xl font-bold text-nordic-text">{t.shop_title}</h1>
           <p className="text-nordic-muted text-xs">{visibleItems.filter(i => !i.checked).length} {t.remaining}</p>
         </div>
         <Button variant="ghost" onClick={onClearChecked} className="text-xs !p-2 h-8">
@@ -387,7 +336,7 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
               onClick={() => setWeekOffset(1)}
               className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${weekOffset === 1 ? 'bg-white shadow-sm text-nordic-primary' : 'text-gray-500'}`}
            >
-               {t.nextWeek}
+               {t.shop_nextWeek}
            </button>
       </div>
       
@@ -414,7 +363,7 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
 
       <form onSubmit={handleAdd} className="flex gap-2 mb-4">
         <Input 
-          placeholder={t.placeholder}
+          placeholder={t.shop_placeholder}
           value={newItemName}
           onChange={(e: any) => setNewItemName(e.target.value)}
           className="shadow-sm !py-2.5 text-sm"
@@ -436,7 +385,7 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
       
       {visibleItems.length === 0 && (
           <div className="text-center py-20 text-gray-400 text-sm">
-              {t.empty}
+              {t.shop_empty}
           </div>
       )}
 
@@ -461,7 +410,7 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
                             : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
                         }`}
                     >
-                        {cat}
+                        {getCategoryLabel(cat)}
                     </button>
                 ))}
             </div>

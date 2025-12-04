@@ -15,65 +15,9 @@ interface PlanViewProps {
   onSelectRecipe: (recipe: Recipe, meal?: MealPlanItem) => void;
   onUndo: () => void;
   canUndo: boolean;
-  language: Language;
+  t: any; // Translation dictionary
+  language: string;
 }
-
-const TRANSLATIONS = {
-  [Language.EN]: {
-    title: "Meal Plan",
-    subtitle: "Weekly Overview",
-    noMeals: "No meals planned.",
-    generate: "Generate Plan",
-    rateButton: "Rate",
-    rateTitle: "Rate this meal",
-    howWas: "How was the",
-    comments: "Comments (Optional)",
-    placeholder: "e.g. Too salty, kids loved it...",
-    save: "Save Rating",
-    servings: "srv",
-    dinner: "Dinner",
-    ingredients: "Ingredients",
-    instructions: "Instructions",
-    emptySlot: "No meal planned",
-    addMeal: "Add Meal",
-    selectRecipe: "Select a Recipe",
-    searchPlaceholder: "Search recipes...",
-    noRecipesFound: "No recipes found.",
-    replace: "Replace",
-    remove: "Remove",
-    dragHint: "Hold to move",
-    prevWeek: "Previous Week",
-    nextWeek: "Next Week",
-    currentWeek: "Current Week"
-  },
-  [Language.SV]: {
-    title: "Matplanering",
-    subtitle: "Veckoöversikt",
-    noMeals: "Inga måltider planerade.",
-    generate: "Generera Plan",
-    rateButton: "Betyg",
-    rateTitle: "Betygsätt måltid",
-    howWas: "Hur var",
-    comments: "Kommentarer (Valfritt)",
-    placeholder: "t.ex. För salt, barnen älskade det...",
-    save: "Spara Betyg",
-    servings: "port",
-    dinner: "Middag",
-    ingredients: "Ingredienser",
-    instructions: "Instruktioner",
-    emptySlot: "Ingen måltid planerad",
-    addMeal: "Lägg till",
-    selectRecipe: "Välj ett recept",
-    searchPlaceholder: "Sök recept...",
-    noRecipesFound: "Inga recept hittades.",
-    replace: "Byt ut",
-    remove: "Ta bort",
-    dragHint: "Håll för att flytta",
-    prevWeek: "Föregående vecka",
-    nextWeek: "Nästa vecka",
-    currentWeek: "Nuvarande vecka"
-  }
-};
 
 interface DragState {
     isDragging: boolean;
@@ -91,7 +35,7 @@ interface DragState {
     draggedMeal?: MealPlanItem;
 }
 
-export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, onRateMeal, onAddMeal, onMoveMeal, onReorderMeal, onRemoveMeal, onSelectRecipe, onUndo, canUndo, language }) => {
+export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, onRateMeal, onAddMeal, onMoveMeal, onReorderMeal, onRemoveMeal, onSelectRecipe, onUndo, canUndo, t, language }) => {
   const [ratingItem, setRatingItem] = useState<MealPlanItem | null>(null);
   const [ratingValue, setRatingValue] = useState(0);
   const [ratingComment, setRatingComment] = useState('');
@@ -106,8 +50,6 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [hoveredDate, setHoveredDate] = useState<string | null>(null);
   const longPressTimer = useRef<any>(null);
-  
-  const t = TRANSLATIONS[language];
 
   // Helper to check if a date is in the past (strict day comparison)
   const isDatePast = (dateStr: string) => {
@@ -274,7 +216,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
             const isPast = isDatePast(date);
 
             const dateObj = new Date(date);
-            const weekday = dateObj.toLocaleDateString(language === Language.SV ? 'sv-SE' : 'en-US', { weekday: 'short' }).toUpperCase().replace('.', '');
+            const weekday = dateObj.toLocaleDateString(language, { weekday: 'short' }).toUpperCase().replace('.', '');
             const dayNum = dateObj.getDate();
             const isToday = new Date().toDateString() === dateObj.toDateString();
 

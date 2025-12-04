@@ -1,17 +1,21 @@
 import { Recipe, MealPlanItem, ShoppingItem, AppSettings, Language, MealType, Ingredient, SHOPPING_CATEGORIES } from '../types';
 
 export const INITIAL_SETTINGS: AppSettings = {
-  language: Language.EN,
+  language: 'en',
   default_adults: 2,
   default_kids: 1,
   pantry_staples: ["Salt", "Pepper", "Olive Oil", "Water", "Sugar", "Flour", "Oil", "Butter"],
+  custom_staples: {},
   stores: [
       {
           id: 1,
           name: "Default Store",
           category_order: [...SHOPPING_CATEGORIES]
       }
-  ]
+  ],
+  ai_provider: 'gemini',
+  openai_api_key: '',
+  custom_languages: {}
 };
 
 export const MOCK_RECIPES: Recipe[] = [
@@ -24,6 +28,8 @@ export const MOCK_RECIPES: Recipe[] = [
     servings_default: 4,
     version: 1,
     history: [],
+    lang: 'en',
+    translations: {},
     instructions: [
       "Mix mince, onion, egg, and breadcrumbs.",
       "Roll into balls and fry in butter.",
@@ -49,6 +55,8 @@ export const MOCK_RECIPES: Recipe[] = [
     servings_default: 4,
     version: 1,
     history: [],
+    lang: 'en',
+    translations: {},
     instructions: [
       "Preheat oven to 200°C.",
       "Place salmon in dish, season with lemon and dill.",
@@ -73,6 +81,8 @@ export const MOCK_RECIPES: Recipe[] = [
     servings_default: 4,
     version: 1,
     history: [],
+    lang: 'en',
+    translations: {},
     instructions: [
       "Cook lentils with taco spice.",
       "Chop vegetables.",
@@ -127,11 +137,16 @@ export const mergeShoppingList = (
     // 1. Keep manual items
     const manualItems = currentList.filter(item => item.is_manually_added);
     
-    // 2. Map existing checked status for persistence
+    // 2. Map existing checked status AND IDs for persistence
     const statusMap = new Map<string, boolean>();
+    const idMap = new Map<string, number>();
+
     currentList.forEach(item => {
         const key = `${item.item_name.toLowerCase()}-${item.unit.toLowerCase()}`;
         statusMap.set(key, item.checked);
+        if (!item.is_manually_added) {
+            idMap.set(key, item.id);
+        }
     });
 
     // 3. Generate new recipe items
@@ -173,13 +188,16 @@ export const mergeShoppingList = (
             } else {
                 // Restore checked status if it existed before
                 const isChecked = statusMap.get(key) || false;
+                const existingId = idMap.get(key);
                 
                 generatedMap.set(key, {
                     ...ing,
                     quantity: quantity,
-                    id: Date.now() + Math.random(), // New ID, but we could try to preserve if needed
+                    id: existingId || (Date.now() + Math.random()), // Preserve ID if exists
                     checked: isChecked,
-                    is_manually_added: false
+                    is_manually_added: false,
+                    lang: targetRecipe.lang, // Inherit language
+                    translations: targetRecipe.translations ? {} : undefined // Init empty translations for item
                 });
             }
         });

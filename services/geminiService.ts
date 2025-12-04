@@ -1,10 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { Recipe, Nutrition, Ingredient } from '../types';
-
-// Initialize Gemini
-// Note: In a real PWA, the API key should be proxied or user-provided if client-side.
-// We assume process.env.API_KEY is available as per guidelines.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+import { Recipe, Nutrition, Ingredient, ShoppingItem } from '../types';
+import { storage } from './storage';
 
 interface ParseInput {
   text?: string;
@@ -12,8 +8,94 @@ interface ParseInput {
   mimeType?: string;
 }
 
+// Helper: Call OpenAI Chat Completion
+const callOpenAI = async (
+  apiKey: string,
+  systemPrompt: string,
+  userPrompt: string,
+  jsonMode: boolean = false,
+  imageInput?: { data: string, mimeType: string }
+): Promise<string> => {
+  const messages: any[] = [
+    { role: "system", content: systemPrompt }
+  ];
+
+  const userContent: any[] = [{ type: "text", text: userPrompt }];
+
+  if (imageInput) {
+    userContent.push({
+      type: "image_url",
+      image_url: {
+        url: `data:${imageInput.mimeType};base64,${imageInput.data}`
+      }
+    });
+  }
+
+  messages.push({ role: "user", content: userContent });
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages: messages,
+        response_format: jsonMode ? { type: "json_object" } : undefined,
+        temperature: 0.7
+      })
+    });
+
+    if (!response.ok) {
+        const err = await response.json();
+        throw new Error(`OpenAI Error: ${err.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } catch (error) {
+    console.error("OpenAI API Call Error:", error);
+    throw error;
+  }
+};
+
+// Helper: Call OpenAI Image Generation (DALL-E 3)
+const callOpenAIImage = async (apiKey: string, prompt: string): Promise<string | null> => {
+    try {
+        const response = await fetch("https://api.openai.com/v1/images/generations", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: "dall-e-3",
+                prompt: prompt,
+                n: 1,
+                size: "1024x1024",
+                response_format: "b64_json"
+            })
+        });
+
+        if (!response.ok) throw new Error("OpenAI Image Gen failed");
+        
+        const data = await response.json();
+        if (data.data && data.data.length > 0) {
+            return `data:image/png;base64,${data.data[0].b64_json}`;
+        }
+        return null;
+    } catch (error) {
+        console.error("OpenAI Image Error:", error);
+        return null;
+    }
+};
+
+
 export const parseRecipeWithAI = async (input: ParseInput): Promise<Omit<Recipe, 'id' | 'images' | 'version'>> => {
-  const modelId = "gemini-2.5-flash"; // Optimized for speed and JSON structure
+  const settings = await storage.getSettings();
+  const provider = settings.ai_provider || 'gemini';
 
   const promptText = `
     Extract a structured recipe from the provided content (text or document). 
@@ -22,28 +104,43 @@ export const parseRecipeWithAI = async (input: ParseInput): Promise<Omit<Recipe,
     Infer the cuisine type (e.g., Italian, French, Asian, Mexican, Nordic, etc.).
   `;
 
-  let contents;
+  if (provider === 'openai' && settings.openai_api_key) {
+      const systemPrompt = `You are a structured data extractor. You must extract recipe data and output valid JSON matching this schema:
+      {
+        "title": "string",
+        "description": "string",
+        "cuisine": "string",
+        "servings_default": "number",
+        "instructions": ["string"],
+        "ingredients": [
+            { "item_name": "string", "quantity": "number", "unit": "string", "category": "string (Produce, Dairy, Meat, Pantry, Bakery, Frozen, Other)" }
+        ]
+      }`;
+      
+      const res = await callOpenAI(
+          settings.openai_api_key, 
+          systemPrompt, 
+          input.text || promptText, 
+          true,
+          (input.fileData && input.mimeType) ? { data: input.fileData, mimeType: input.mimeType } : undefined
+      );
+      return JSON.parse(res) as Omit<Recipe, 'id' | 'images' | 'version'>;
+  }
 
+  // Fallback to Gemini
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const modelId = "gemini-2.5-flash";
+
+  let contents;
   if (input.fileData && input.mimeType) {
     contents = {
       parts: [
-        {
-          inlineData: {
-            mimeType: input.mimeType,
-            data: input.fileData
-          }
-        },
-        { 
-          text: input.text ? `${promptText}\n\nAdditional context: "${input.text}"` : promptText 
-        }
+        { inlineData: { mimeType: input.mimeType, data: input.fileData } },
+        { text: input.text ? `${promptText}\n\nAdditional context: "${input.text}"` : promptText }
       ]
     };
   } else {
-    contents = {
-      parts: [
-        { text: `${promptText}\n\nText to parse: "${input.text || ''}"` }
-      ]
-    }
+    contents = { parts: [{ text: `${promptText}\n\nText to parse: "${input.text || ''}"` }] }
   }
 
   try {
@@ -59,10 +156,7 @@ export const parseRecipeWithAI = async (input: ParseInput): Promise<Omit<Recipe,
             description: { type: Type.STRING },
             cuisine: { type: Type.STRING },
             servings_default: { type: Type.NUMBER },
-            instructions: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
+            instructions: { type: Type.ARRAY, items: { type: Type.STRING } },
             ingredients: {
               type: Type.ARRAY,
               items: {
@@ -84,9 +178,7 @@ export const parseRecipeWithAI = async (input: ParseInput): Promise<Omit<Recipe,
 
     const jsonText = response.text;
     if (!jsonText) throw new Error("No response from AI");
-
     return JSON.parse(jsonText) as Omit<Recipe, 'id' | 'images' | 'version'>;
-
   } catch (error) {
     console.error("Gemini AI Recipe Parse Error:", error);
     throw error;
@@ -94,31 +186,31 @@ export const parseRecipeWithAI = async (input: ParseInput): Promise<Omit<Recipe,
 };
 
 export const generateRecipeImage = async (title: string, description: string): Promise<string | null> => {
-  const modelId = "gemini-2.5-flash-image";
+  const settings = await storage.getSettings();
+  const provider = settings.ai_provider || 'gemini';
   const prompt = `Professional food photography of ${title}. ${description}. High resolution, appetizing, studio lighting, 4k.`;
 
+  if (provider === 'openai' && settings.openai_api_key) {
+      return await callOpenAIImage(settings.openai_api_key, prompt);
+  }
+
+  // Fallback to Gemini
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   try {
     const response = await ai.models.generateContent({
-      model: modelId,
-      contents: {
-        parts: [{ text: prompt }]
-      },
-      config: {
-        imageConfig: {
-            aspectRatio: "16:9"
-        }
-      }
+      model: "gemini-2.5-flash-image",
+      contents: { parts: [{ text: prompt }] },
+      config: { imageConfig: { aspectRatio: "16:9" } }
     });
 
     if (response.candidates?.[0]?.content?.parts) {
         for (const part of response.candidates[0].content.parts) {
-            if (part.inlineData && part.inlineData.mimeType && part.inlineData.data) {
+            if (part.inlineData?.mimeType && part.inlineData?.data) {
                  return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
             }
         }
     }
     return null;
-
   } catch (error) {
     console.error("Gemini AI Image Gen Error:", error);
     throw error;
@@ -126,105 +218,97 @@ export const generateRecipeImage = async (title: string, description: string): P
 };
 
 export const estimateNutrition = async (ingredients: Ingredient[]): Promise<Nutrition> => {
-  const modelId = "gemini-2.5-flash";
+  const settings = await storage.getSettings();
+  const provider = settings.ai_provider || 'gemini';
   const ingredientsList = ingredients.map(i => `${i.quantity} ${i.unit} ${i.item_name}`).join(', ');
-  
-  const prompt = `
-    Based on the following ingredients, estimate the nutritional values per 100g of the prepared dish.
-    Ingredients: ${ingredientsList}.
-    
-    Return the values as raw numbers (no units).
-  `;
+  const prompt = `Based on the following ingredients, estimate the nutritional values per 100g. Ingredients: ${ingredientsList}. Return raw numbers.`;
 
+  if (provider === 'openai' && settings.openai_api_key) {
+      const systemPrompt = `Return JSON only: { "calories": number, "protein": number, "carbs": number, "sugar": number, "fat": number, "saturated_fat": number, "unsaturated_fat": number, "fiber": number, "salt": number }`;
+      const res = await callOpenAI(settings.openai_api_key, systemPrompt, prompt, true);
+      return JSON.parse(res) as Nutrition;
+  }
+
+  // Fallback to Gemini
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   try {
     const response = await ai.models.generateContent({
-      model: modelId,
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            calories: { type: Type.NUMBER, description: "Energy in kcal per 100g" },
-            protein: { type: Type.NUMBER, description: "Protein in grams per 100g" },
-            carbs: { type: Type.NUMBER, description: "Total carbohydrates in grams per 100g" },
-            sugar: { type: Type.NUMBER, description: "Sugars in grams per 100g" },
-            fat: { type: Type.NUMBER, description: "Total fat in grams per 100g" },
-            saturated_fat: { type: Type.NUMBER, description: "Saturated fat in grams per 100g" },
-            unsaturated_fat: { type: Type.NUMBER, description: "Unsaturated fat in grams per 100g" },
-            fiber: { type: Type.NUMBER, description: "Fiber in grams per 100g" },
-            salt: { type: Type.NUMBER, description: "Salt in grams per 100g" },
+            calories: { type: Type.NUMBER },
+            protein: { type: Type.NUMBER },
+            carbs: { type: Type.NUMBER },
+            sugar: { type: Type.NUMBER },
+            fat: { type: Type.NUMBER },
+            saturated_fat: { type: Type.NUMBER },
+            unsaturated_fat: { type: Type.NUMBER },
+            fiber: { type: Type.NUMBER },
+            salt: { type: Type.NUMBER },
           },
           required: ["calories", "protein", "carbs", "sugar", "fat", "saturated_fat", "unsaturated_fat", "fiber", "salt"]
         }
       }
     });
-
     const jsonText = response.text;
-    if (!jsonText) throw new Error("No response from AI for nutrition");
+    if (!jsonText) throw new Error("No response");
     return JSON.parse(jsonText) as Nutrition;
-
   } catch (error) {
-    console.error("Gemini AI Nutrition Estimation Error:", error);
+    console.error("Nutrition Error:", error);
     throw error;
   }
 };
 
-export const simulateMealPlan = async (days: number, dietContext: string): Promise<any> => {
-    // Example of a simulation tool for the "Brain" aspect
-    const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: `Suggest ${days} dinner meals for a family. Context: ${dietContext}. Return just a list of dish names.`,
-    });
-    return response.text;
-};
-
 export const summarizeFeedback = async (title: string, comments: string[]): Promise<string> => {
     if (!comments || comments.length === 0) return "";
+    const settings = await storage.getSettings();
+    const provider = settings.ai_provider || 'gemini';
     
-    const modelId = "gemini-2.5-flash";
-    const prompt = `
-        Summarize the following feedback comments for the recipe "${title}". 
-        Identify common themes (pros/cons) and suggestions.
-        Keep it concise (max 3 sentences).
-        
-        Comments:
-        ${comments.map(c => `- "${c}"`).join('\n')}
-    `;
+    const prompt = `Summarize comments for recipe "${title}". Identify pros/cons. Max 3 sentences. Comments: ${comments.map(c => `- "${c}"`).join('\n')}`;
 
+    if (provider === 'openai' && settings.openai_api_key) {
+        return await callOpenAI(settings.openai_api_key, "You are a helpful assistant.", prompt, false);
+    }
+
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
         const response = await ai.models.generateContent({
-            model: modelId,
+            model: "gemini-2.5-flash",
             contents: prompt
         });
-        return response.text || "Could not summarize comments.";
+        return response.text || "Could not summarize.";
     } catch (error) {
-        console.error("Gemini AI Feedback Summary Error:", error);
-        return "Failed to generate summary.";
+        return "Failed to summarize.";
     }
 };
 
 export const refineInstructions = async (title: string, ingredients: string[], currentInstructions: string[], modification: 'detailed' | 'simple'): Promise<string[]> => {
-  const modelId = "gemini-2.5-flash";
+  const settings = await storage.getSettings();
+  const provider = settings.ai_provider || 'gemini';
   const ingredientsList = ingredients.join(', ');
   
   const prompt = `
-    Rewrite the following cooking instructions for "${title}" to be ${modification === 'detailed' ? 'more detailed, explaining techniques clearly for beginners' : 'concise, short and simplified'}.
-    
-    CRITICAL CONSTRAINT: You must ONLY use the ingredients listed below. Do NOT add steps that require extra ingredients (like oil, butter, water, salt, spices) unless they are explicitly in the ingredient list provided.
-    
-    Allowed Ingredients:
-    ${ingredientsList}
-
-    Current Instructions:
-    ${currentInstructions.map((s, i) => `${i + 1}. ${s}`).join('\n')}
-    
-    Keep the same logical flow.
+    Rewrite cooking instructions for "${title}" to be ${modification}.
+    Constraint: Use ONLY these ingredients: ${ingredientsList}.
+    Current: ${currentInstructions.join('\n')}
+    Return a JSON array of strings.
   `;
 
+  if (provider === 'openai' && settings.openai_api_key) {
+       const systemPrompt = `Return a JSON object with a key "instructions" containing an array of strings. Example: { "instructions": ["Step 1", "Step 2"] }`;
+       const res = await callOpenAI(settings.openai_api_key, systemPrompt, prompt, true);
+       const parsed = JSON.parse(res);
+       return Array.isArray(parsed) ? parsed : (parsed.instructions || []);
+  }
+
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   try {
     const response = await ai.models.generateContent({
-      model: modelId,
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -234,37 +318,32 @@ export const refineInstructions = async (title: string, ingredients: string[], c
         }
       }
     });
-
     const jsonText = response.text;
     if (!jsonText) throw new Error("No response");
     return JSON.parse(jsonText) as string[];
-
   } catch (error) {
-    console.error("Gemini AI Instruction Refine Error:", error);
+    console.error("Refine Error:", error);
     throw error;
   }
 };
 
 export const suggestNewDishes = async (favorites: string[]): Promise<string[]> => {
-    const modelId = "gemini-2.5-flash";
-    
-    let context = "";
-    if (favorites.length > 0) {
-        context = `My favorite dishes are: ${favorites.join(', ')}.`;
-    } else {
-        context = `I want to cook healthy, family-friendly dinners.`;
+    const settings = await storage.getSettings();
+    const provider = settings.ai_provider || 'gemini';
+    const context = favorites.length > 0 ? `Favorites: ${favorites.join(', ')}` : `Healthy family dinners.`;
+    const prompt = `${context}. Suggest 5 new dinner dishes. Return JSON array of strings.`;
+
+    if (provider === 'openai' && settings.openai_api_key) {
+        const systemPrompt = `Return JSON: { "suggestions": ["Dish 1", "Dish 2"] }`;
+        const res = await callOpenAI(settings.openai_api_key, systemPrompt, prompt, true);
+        const parsed = JSON.parse(res);
+        return Array.isArray(parsed) ? parsed : (parsed.suggestions || []);
     }
 
-    const prompt = `
-      ${context}
-      Suggest 5 new, distinct dinner dishes I might like based on these preferences.
-      Do NOT suggest the exact same dishes I listed.
-      Return ONLY a JSON array of strings, e.g. ["Dish Name 1", "Dish Name 2"].
-    `;
-
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
         const response = await ai.models.generateContent({
-            model: modelId,
+            model: "gemini-2.5-flash",
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
@@ -274,12 +353,11 @@ export const suggestNewDishes = async (favorites: string[]): Promise<string[]> =
                 }
             }
         });
-        
         const jsonText = response.text;
         if (!jsonText) throw new Error("No response");
         return JSON.parse(jsonText) as string[];
     } catch (error) {
-        console.error("Gemini AI Suggestion Error:", error);
+        console.error("Suggestion Error:", error);
         return [];
     }
 };
@@ -294,24 +372,26 @@ export interface ImprovementSuggestion {
 }
 
 export const suggestRecipeImprovement = async (recipe: Recipe, householdContext: string): Promise<ImprovementSuggestion | null> => {
-    const modelId = "gemini-2.5-flash";
-    
-    const ingredientsList = recipe.ingredients.map(i => `${i.quantity} ${i.unit} ${i.item_name} (${i.category})`).join(', ');
-    const instructionsList = recipe.instructions.map((s, i) => `${i + 1}. ${s}`).join('\n');
+    const settings = await storage.getSettings();
+    const provider = settings.ai_provider || 'gemini';
     
     const prompt = `
-        Analyze the recipe "${recipe.title}".
-        Household Context: ${householdContext} (e.g. number of kids, adults).
-        
-        Suggest ONE significant improvement or variation to this recipe that fits the household context perfectly (e.g. make it healthier for kids, add more hidden veggies, make it quicker for busy parents, etc.).
-        
-        The suggestion MUST include a motivation explaining WHY this change is good for them.
-        Return the FULL updated list of ingredients and instructions.
+        Analyze recipe "${recipe.title}". Context: ${householdContext}.
+        Suggest ONE improvement. Return JSON with motivation and full updated ingredients/instructions.
+        Schema: { motivation: string, changes: { title_suffix: string, ingredients: [ {item_name, quantity, unit, category} ], instructions: [string] } }
+        Current ingredients: ${recipe.ingredients.map(i => i.item_name).join(', ')}.
     `;
 
+    if (provider === 'openai' && settings.openai_api_key) {
+        const systemPrompt = `You are a creative chef. Output valid JSON matching the schema provided in the prompt.`;
+        const res = await callOpenAI(settings.openai_api_key, systemPrompt, prompt, true);
+        return JSON.parse(res) as ImprovementSuggestion;
+    }
+
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     try {
         const response = await ai.models.generateContent({
-            model: modelId,
+            model: "gemini-2.5-flash",
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
@@ -322,7 +402,7 @@ export const suggestRecipeImprovement = async (recipe: Recipe, householdContext:
                         changes: {
                             type: Type.OBJECT,
                             properties: {
-                                title_suffix: { type: Type.STRING, description: "Short suffix to append to title, e.g. '(Kid Friendly)'" },
+                                title_suffix: { type: Type.STRING },
                                 ingredients: {
                                     type: Type.ARRAY,
                                     items: {
@@ -336,10 +416,7 @@ export const suggestRecipeImprovement = async (recipe: Recipe, householdContext:
                                         required: ["item_name", "quantity", "unit", "category"]
                                     }
                                 },
-                                instructions: {
-                                    type: Type.ARRAY,
-                                    items: { type: Type.STRING }
-                                }
+                                instructions: { type: Type.ARRAY, items: { type: Type.STRING } }
                             },
                             required: ["ingredients", "instructions"]
                         }
@@ -353,7 +430,210 @@ export const suggestRecipeImprovement = async (recipe: Recipe, householdContext:
         if (!jsonText) throw new Error("No response");
         return JSON.parse(jsonText) as ImprovementSuggestion;
     } catch (error) {
-        console.error("Gemini AI Improvement Error:", error);
+        console.error("Improvement Error:", error);
         return null;
     }
 }
+
+// --- Translation Services ---
+
+export const translateRecipe = async (recipe: Recipe, targetLang: string): Promise<Recipe> => {
+    const settings = await storage.getSettings();
+    const provider = settings.ai_provider || 'gemini';
+    
+    const prompt = `
+      Translate this recipe content to the language code: "${targetLang}".
+      IMPORTANT:
+      1. Translate 'title', 'description', 'cuisine', 'instructions'.
+      2. Translate ingredient 'item_name' and 'unit'.
+      3. DO NOT translate 'category' (keep it exactly as is: Produce, Dairy, Meat, etc).
+      4. Keep numbers and structure identical.
+      
+      Recipe JSON: ${JSON.stringify({
+          title: recipe.title,
+          description: recipe.description,
+          cuisine: recipe.cuisine,
+          instructions: recipe.instructions,
+          ingredients: recipe.ingredients
+      })}
+    `;
+
+    // Reusing logic from above, but forcing return of partial Recipe
+    if (provider === 'openai' && settings.openai_api_key) {
+        const systemPrompt = `You are a translator. Return valid JSON only matching the input structure.`;
+        const res = await callOpenAI(settings.openai_api_key, systemPrompt, prompt, true);
+        const translated = JSON.parse(res);
+        return { ...recipe, ...translated, lang: targetLang };
+    }
+
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        title: { type: Type.STRING },
+                        description: { type: Type.STRING },
+                        cuisine: { type: Type.STRING },
+                        instructions: { type: Type.ARRAY, items: { type: Type.STRING } },
+                        ingredients: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    item_name: { type: Type.STRING },
+                                    quantity: { type: Type.NUMBER },
+                                    unit: { type: Type.STRING },
+                                    category: { type: Type.STRING }
+                                },
+                                required: ["item_name", "quantity", "unit", "category"]
+                            }
+                        }
+                    },
+                    required: ["title", "description", "instructions", "ingredients"]
+                }
+            }
+        });
+        const translated = JSON.parse(response.text || '{}');
+        return { ...recipe, ...translated, lang: targetLang };
+    } catch (error) {
+        console.error("Translation Error:", error);
+        return recipe; // Return original on fail
+    }
+};
+
+export const translateShoppingItems = async (items: ShoppingItem[], targetLang: string): Promise<ShoppingItem[]> => {
+    if (items.length === 0) return items;
+    const settings = await storage.getSettings();
+    const provider = settings.ai_provider || 'gemini';
+
+    // Minify input to save tokens
+    const simplifiedItems = items.map(i => ({ id: i.id, n: i.item_name, u: i.unit }));
+    
+    const prompt = `
+        Translate these shopping items to language code: "${targetLang}".
+        Input format: { id: number, n: name, u: unit }
+        Output format: Array of { id: number, item_name: string, unit: string }
+        Keep IDs matching.
+        Items: ${JSON.stringify(simplifiedItems)}
+    `;
+
+    try {
+        let translatedData: any[] = [];
+
+        if (provider === 'openai' && settings.openai_api_key) {
+             const systemPrompt = `Return JSON array.`;
+             const res = await callOpenAI(settings.openai_api_key, systemPrompt, prompt, true);
+             const parsed = JSON.parse(res);
+             translatedData = Array.isArray(parsed) ? parsed : (parsed.items || []);
+        } else {
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const response = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: prompt,
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: Type.ARRAY,
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                id: { type: Type.NUMBER },
+                                item_name: { type: Type.STRING },
+                                unit: { type: Type.STRING }
+                            },
+                            required: ["id", "item_name", "unit"]
+                        }
+                    }
+                }
+            });
+            translatedData = JSON.parse(response.text || '[]');
+        }
+
+        // Merge back
+        return items.map(original => {
+            const translated = translatedData.find((t: any) => t.id === original.id);
+            if (translated) {
+                return { ...original, item_name: translated.item_name, unit: translated.unit, lang: targetLang };
+            }
+            return original;
+        });
+
+    } catch (error) {
+        console.error("Shopping List Translation Error", error);
+        return items;
+    }
+};
+
+export const translateStrings = async (strings: string[], targetLang: string): Promise<string[]> => {
+    if (strings.length === 0) return strings;
+    const settings = await storage.getSettings();
+    const provider = settings.ai_provider || 'gemini';
+
+    const prompt = `Translate these strings to language code: "${targetLang}": ${JSON.stringify(strings)}`;
+
+    try {
+        if (provider === 'openai' && settings.openai_api_key) {
+             const systemPrompt = `Return JSON array of strings.`;
+             const res = await callOpenAI(settings.openai_api_key, systemPrompt, prompt, true);
+             const parsed = JSON.parse(res);
+             return Array.isArray(parsed) ? parsed : strings;
+        } else {
+             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+             const response = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: prompt,
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: Type.ARRAY,
+                        items: { type: Type.STRING }
+                    }
+                }
+            });
+            return JSON.parse(response.text || '[]');
+        }
+    } catch (e) {
+        return strings;
+    }
+}
+
+export const generateInterfaceTranslations = async (targetLang: string, baseTranslations: any): Promise<any> => {
+    const settings = await storage.getSettings();
+    const provider = settings.ai_provider || 'gemini';
+
+    // We can't send huge JSON in one go reliably if it's too big, but the current UI strings are small enough (< 2k tokens)
+    const prompt = `
+        Translate the following UI strings keys and values to the language with code: "${targetLang}".
+        Return a single JSON object with the same keys.
+        Input JSON: ${JSON.stringify(baseTranslations)}
+    `;
+
+    if (provider === 'openai' && settings.openai_api_key) {
+        const systemPrompt = `Return JSON object matching input keys.`;
+        const res = await callOpenAI(settings.openai_api_key, systemPrompt, prompt, true);
+        return JSON.parse(res);
+    }
+
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // Since we don't have a rigid schema for arbitrary keys, we just ask for JSON object
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json"
+            }
+        });
+        const jsonText = response.text;
+        if (!jsonText) throw new Error("No response");
+        return JSON.parse(jsonText);
+    } catch (e) {
+        console.error("Interface Translation Error", e);
+        throw e;
+    }
+};

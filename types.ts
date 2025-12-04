@@ -42,6 +42,14 @@ export interface Nutrition {
   salt: number;
 }
 
+export interface TranslatedRecipeContent {
+  title: string;
+  description: string;
+  instructions: string[];
+  ingredients: Ingredient[];
+  cuisine?: string;
+}
+
 export interface Recipe {
   id: number;
   title: string;
@@ -56,6 +64,8 @@ export interface Recipe {
   // Versioning
   version: number;
   history?: Recipe[]; // Snapshots of previous versions
+  lang?: string; // Language code (e.g., 'en', 'sv', 'fr')
+  translations?: Record<string, TranslatedRecipeContent>; // Cache for other languages
 }
 
 export interface MealPlanItem {
@@ -75,6 +85,8 @@ export interface ShoppingItem extends Ingredient {
   id: number;
   checked: boolean;
   is_manually_added: boolean;
+  lang?: string;
+  translations?: Record<string, { item_name: string, unit: string }>; // Cache
 }
 
 export interface Store {
@@ -84,11 +96,15 @@ export interface Store {
 }
 
 export interface AppSettings {
-  language: Language;
+  language: string; // Changed from enum to string to support any code
   default_adults: number;
   default_kids: number;
   pantry_staples: string[];
+  custom_staples?: Record<string, string[]>; // Cache for staples per language
   stores: Store[];
+  ai_provider: 'gemini' | 'openai';
+  openai_api_key?: string;
+  custom_languages?: Record<string, any>; // Stores generated UI translations
 }
 
 export type ViewState = 'plan' | 'shop' | 'recipes' | 'settings' | 'stats';

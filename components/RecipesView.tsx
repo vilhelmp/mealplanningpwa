@@ -11,79 +11,11 @@ interface RecipesViewProps {
   onDeleteRecipe: (id: number) => void;
   onAddMeal: (date: string, recipeId: number) => void;
   onSelectRecipe: (recipe: Recipe) => void;
-  language: Language;
+  t: any;
+  language: string;
 }
 
-const TRANSLATIONS = {
-  [Language.EN]: {
-    title: "Recipes",
-    saved: "saved",
-    add: "Add Recipe",
-    importTitle: "Add Recipe",
-    importDesc: "Paste a URL, text, or upload a file (PDF/Image). AI will do the rest.",
-    placeholder: "e.g., 'Spaghetti Carbonara' or paste full text...",
-    parsing: "Parsing...",
-    importBtn: "Import Recipe",
-    uploadBtn: "Upload File",
-    takePhoto: "Take Photo",
-    or: "OR",
-    fileSelected: "Selected:",
-    clearFile: "Clear",
-    menuTitle: "Recipe Options",
-    edit: "Edit Recipe",
-    delete: "Delete Recipe",
-    cancel: "Cancel",
-    confirmDelete: "Delete",
-    deleteWarning: "Are you sure you want to delete this recipe?",
-    viewFeedback: "View Feedback",
-    feedbackTitle: "Recipe Feedback",
-    noFeedback: "No ratings yet.",
-    generatingSummary: "AI is summarizing comments...",
-    summaryLabel: "AI Summary",
-    recentComments: "Recent Comments",
-    close: "Close",
-    getIdeas: "Get Ideas",
-    suggestTitle: "Dinner Ideas",
-    suggestDesc: "Based on your favorite recipes, here are some suggestions you might like.",
-    suggesting: "Looking for ideas...",
-    noSuggestions: "Could not generate suggestions. Try again later."
-  },
-  [Language.SV]: {
-    title: "Recept",
-    saved: "sparade",
-    add: "Nytt Recept",
-    importTitle: "Lägg till recept",
-    importDesc: "Klistra in URL, text eller ladda upp en fil (PDF/Bild). AI fixar resten.",
-    placeholder: "t.ex. 'Köttbullar' eller klistra in text...",
-    parsing: "Bearbetar...",
-    importBtn: "Importera Recept",
-    uploadBtn: "Ladda upp fil",
-    takePhoto: "Ta bild",
-    or: "ELLER",
-    fileSelected: "Vald:",
-    clearFile: "Rensa",
-    menuTitle: "Alternativ",
-    edit: "Redigera Recept",
-    delete: "Ta bort Recept",
-    cancel: "Avbryt",
-    confirmDelete: "Ta bort",
-    deleteWarning: "Är du säker på att du vill ta bort detta recept?",
-    viewFeedback: "Visa Feedback",
-    feedbackTitle: "Receptomdömen",
-    noFeedback: "Inga betyg än.",
-    generatingSummary: "AI sammanfattar kommentarer...",
-    summaryLabel: "AI Sammanfattning",
-    recentComments: "Senaste kommentarer",
-    close: "Stäng",
-    getIdeas: "Få tips",
-    suggestTitle: "Middagsförslag",
-    suggestDesc: "Baserat på dina favoritrecept, här är några förslag du kanske gillar.",
-    suggesting: "Letar efter idéer...",
-    noSuggestions: "Kunde inte generera förslag. Försök igen senare."
-  }
-};
-
-export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], onAddRecipe, onSelectRecipe, onDeleteRecipe, language }) => {
+export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], onAddRecipe, onSelectRecipe, onDeleteRecipe, t, language }) => {
   // --- Import State ---
   const [isImportOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState('');
@@ -108,8 +40,6 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-
-  const t = TRANSLATIONS[language];
 
   // Helper to get stats
   const getRecipeStats = (recipeId: number) => {
@@ -248,7 +178,7 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
     <div className="pb-24 space-y-3">
       <div className="flex items-center justify-between px-1">
         <div className="flex items-baseline gap-2">
-          <h1 className="text-xl font-bold text-nordic-text">{t.title}</h1>
+          <h1 className="text-xl font-bold text-nordic-text">{t.recipes_title}</h1>
           <p className="text-nordic-muted text-xs">{recipes.length} {t.saved}</p>
         </div>
         <div className="flex gap-2">
@@ -472,7 +402,7 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
           
           <textarea 
             className="w-full h-32 p-3 rounded-xl bg-gray-50 border border-gray-200 focus:border-nordic-primary outline-none resize-none text-sm"
-            placeholder={t.placeholder}
+            placeholder={t.recipe_placeholder}
             value={importText}
             onChange={e => setImportText(e.target.value)}
           />

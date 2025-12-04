@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ViewState, Recipe, MealPlanItem, ShoppingItem, AppSettings, Language, MealType } from './types';
 import { INITIAL_SETTINGS, generateInitialPlan, mergeShoppingList } from './services/mockData';
 import { storage } from './services/storage';
 import { Icons } from './components/Shared';
+import { BASE_TRANSLATIONS } from './services/translations';
 
 // Views
 import { PlanView } from './components/PlanView';
@@ -11,25 +12,6 @@ import { RecipesView } from './components/RecipesView';
 import { SettingsView } from './components/SettingsView';
 import { StatsView } from './components/StatsView';
 import { RecipeDetail } from './components/RecipeDetail';
-
-const NAV_TRANSLATIONS = {
-  [Language.EN]: {
-    plan: "Plan",
-    shop: "Shop",
-    recipes: "Recipes",
-    settings: "Settings",
-    stats: "Stats",
-    loading: "Loading Kitchen..."
-  },
-  [Language.SV]: {
-    plan: "Planering",
-    shop: "Handla",
-    recipes: "Recept",
-    settings: "Inställningar",
-    stats: "Statistik",
-    loading: "Laddar Köket..."
-  }
-};
 
 const App = () => {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -48,7 +30,6 @@ const App = () => {
   const [selectedContext, setSelectedContext] = useState<{ recipe: Recipe, meal?: MealPlanItem } | null>(null);
 
   // --- Persistence Helper ---
-  // We wrap state updates with DB persistence
   
   const refreshData = useCallback(async () => {
       const [r, p, s, cfg] = await Promise.all([
@@ -73,14 +54,26 @@ const App = () => {
     init();
   }, [refreshData]);
 
+  // --- Translation Loading ---
+  const t = useMemo(() => {
+      // 1. Try built-in
+      if (BASE_TRANSLATIONS[settings.language]) {
+          return BASE_TRANSLATIONS[settings.language];
+      }
+      // 2. Try custom loaded
+      if (settings.custom_languages && settings.custom_languages[settings.language]) {
+          return settings.custom_languages[settings.language];
+      }
+      // 3. Fallback to English
+      return BASE_TRANSLATIONS[Language.EN];
+  }, [settings.language, settings.custom_languages]);
+
   // --- Logic Helpers ---
 
   const syncShoppingList = async (currentPlan: MealPlanItem[], currentRecipes: Recipe[], currentSettings: AppSettings) => {
       // Get latest list to merge against (to keep manual items)
       const currentList = await storage.getShoppingList();
       
-      // Filter Plan: Only include meals from today onwards for the shopping list
-      // We keep history in the DB for stats, but we don't want to shop for last week's dinner.
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const futurePlan = currentPlan.filter(p => {
@@ -110,7 +103,6 @@ const App = () => {
     setPlanHistory(prev => prev.slice(0, -1));
     
     // Restore DB and State
-    // We clear current plan items and restore previous
     await storage.clearPlan();
     for (const item of previousPlan) await storage.savePlanItem(item);
     
@@ -121,7 +113,6 @@ const App = () => {
   const handleUpdateSettings = async (newSettings: AppSettings) => {
       await storage.saveSettings(newSettings);
       setSettings(newSettings);
-      // If pantry staples changed, shopping list might change
       await syncShoppingList(plan, recipes, newSettings);
   };
 
@@ -133,6 +124,8 @@ const App = () => {
       id: Date.now(),
       version: 1,
       history: [],
+      lang: settings.language, // Set initial language
+      translations: {},
       images: [`https://picsum.photos/400/300?random=${Date.now()}`] // Mock image fallback
     };
     await storage.saveRecipe(newRecipe);
@@ -147,10 +140,12 @@ const App = () => {
     if (existing) {
         const contentChanged = 
             JSON.stringify(existing.ingredients) !== JSON.stringify(updatedRecipe.ingredients) ||
-            JSON.stringify(existing.instructions) !== JSON.stringify(updatedRecipe.instructions);
+            JSON.stringify(existing.instructions) !== JSON.stringify(updatedRecipe.instructions) ||
+            existing.title !== updatedRecipe.title ||
+            existing.description !== updatedRecipe.description;
         
         if (contentChanged) {
-            // Versioning Logic: Snapshot current state to history
+            // Snapshot current state to history
             const snapshot = {
                 ...existing,
                 history: [] // Don't nest history indefinitely
@@ -159,7 +154,9 @@ const App = () => {
             recipeToSave = {
                 ...updatedRecipe,
                 version: (existing.version || 1) + 1,
-                history: [snapshot, ...(existing.history || [])]
+                history: [snapshot, ...(existing.history || [])],
+                // CRITICAL: Clear translation cache for other languages since content changed
+                translations: {} 
             };
         }
     }
@@ -170,11 +167,9 @@ const App = () => {
     
     // Update context if open
     if (selectedContext && selectedContext.recipe.id === recipeToSave.id) {
-        // If the update was triggered from within the modal, we want the modal to reflect the NEW version
         setSelectedContext({ ...selectedContext, recipe: recipeToSave });
     }
     
-    // Recalculate shopping list
     await syncShoppingList(plan, newRecipes, settings);
   };
 
@@ -185,7 +180,6 @@ const App = () => {
       }
 
       // 2. Update State
-      // We calculate the full new recipes array to ensure syncShoppingList works correctly
       const newRecipesFull = recipes.map(r => {
           const updated = updatedRecipes.find(u => u.id === r.id);
           return updated || r;
@@ -207,7 +201,6 @@ const App = () => {
     // Remove meals from plan
     const newPlan = plan.filter(p => p.recipe_id !== recipeId);
     // Sync Plan changes to DB
-    // We have to identify removed items to delete them from DB
     const removedItems = plan.filter(p => p.recipe_id === recipeId);
     for (const item of removedItems) await storage.deletePlanItem(item.id);
     
@@ -223,7 +216,6 @@ const App = () => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      // 1. Separate History (Keep) vs Future (Replace)
       const historyItems = plan.filter(p => {
           const d = new Date(p.date);
           d.setHours(0, 0, 0, 0);
@@ -236,20 +228,16 @@ const App = () => {
           return d >= today;
       });
 
-      // 2. Remove future items from DB
       for (const item of futureItemsToRemove) {
           await storage.deletePlanItem(item.id);
       }
 
-      // 3. Generate new items for upcoming week
       const newFutureItems = generateInitialPlan([...recipes].reverse()); 
       
-      // 4. Save new items
       for (const p of newFutureItems) {
           await storage.savePlanItem(p);
       }
       
-      // 5. Update state with Combined List
       const combinedPlan = [...historyItems, ...newFutureItems];
       setPlan(combinedPlan);
       await syncShoppingList(combinedPlan, recipes, settings);
@@ -272,7 +260,6 @@ const App = () => {
       savePlanHistory();
       const recipe = recipes.find(r => r.id === recipeId);
       
-      // Remove existing meal for date to enforce 1 meal/day logic (optional)
       const existing = plan.find(p => p.date === date);
       if (existing) {
           await storage.deletePlanItem(existing.id);
@@ -328,8 +315,6 @@ const App = () => {
 
   const handleMoveMeal = async (date: string, direction: 'up' | 'down') => {
       savePlanHistory();
-      // Logic: Swap dates or move date.
-      // Since 'Move' can get complex with DB calls, we calculate full new state then save changed items.
       const currentPlan = [...plan];
       const idx = currentPlan.findIndex(p => p.date === date);
       if (idx === -1) return;
@@ -357,13 +342,11 @@ const App = () => {
       
       for (const item of itemsToUpdate) await storage.savePlanItem(item);
       setPlan(currentPlan);
-      // Shopping list usually doesn't change on move, but good to ensure sync
       await syncShoppingList(currentPlan, recipes, settings);
   };
 
   const handleReorderMeal = async (mealId: number, targetDate: string) => {
       savePlanHistory();
-      // Identify items involved
       const currentPlan = [...plan];
       const draggingIdx = currentPlan.findIndex(p => p.id === mealId);
       if (draggingIdx === -1) return;
@@ -401,19 +384,16 @@ const App = () => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       
-      // Identify items to remove (strictly before today)
       const itemsToRemove = plan.filter(p => {
           const d = new Date(p.date);
           d.setHours(0,0,0,0);
           return d < today;
       });
       
-      // Delete from DB
       for (const item of itemsToRemove) {
           await storage.deletePlanItem(item.id);
       }
       
-      // Update Local State (Keep only today and future)
       setPlan(prev => prev.filter(p => {
           const d = new Date(p.date);
           d.setHours(0,0,0,0);
@@ -422,7 +402,6 @@ const App = () => {
   };
 
   const handleClearReviews = async () => {
-      // Find items with ratings
       const updates = plan
           .filter(p => p.rating !== undefined || p.rating_comment !== undefined)
           .map(p => ({ ...p, rating: undefined, rating_comment: undefined }));
@@ -461,14 +440,18 @@ const App = () => {
       const item = shoppingList.find(i => i.id === id);
       if (!item) return;
       
-      const updated = { ...item, ...updates };
+      // If we rename an item manually, clear its translation cache
+      const shouldClearCache = updates.item_name && updates.item_name !== item.item_name;
+      const updated = { 
+          ...item, 
+          ...updates,
+          translations: shouldClearCache ? {} : item.translations 
+      };
       
       if ('quantity' in updates && (updates.quantity || 0) <= 0) {
-          // Delete
           await storage.deleteShoppingItem(id);
           setShoppingList(prev => prev.filter(i => i.id !== id));
       } else {
-          // Update
           await storage.saveShoppingItem(updated);
           setShoppingList(prev => prev.map(i => i.id === id ? updated : i));
       }
@@ -490,7 +473,9 @@ const App = () => {
               unit: 'pc',
               category: 'Other',
               checked: false,
-              is_manually_added: true
+              is_manually_added: true,
+              lang: settings.language,
+              translations: {}
           };
           await storage.saveShoppingItem(newItem);
           setShoppingList(prev => [newItem, ...prev]);
@@ -502,8 +487,6 @@ const App = () => {
       for (const item of toRemove) await storage.deleteShoppingItem(item.id);
       setShoppingList(prev => prev.filter(i => !i.checked));
   };
-
-  const t = NAV_TRANSLATIONS[settings.language];
 
   // Nav Item Component
   const NavItem = ({ viewName, icon: Icon, label }: { viewName: ViewState, icon: React.ElementType, label: string }) => (
@@ -544,6 +527,7 @@ const App = () => {
                 onSelectRecipe={(r, m) => setSelectedContext({ recipe: r, meal: m })}
                 onUndo={handleUndo}
                 canUndo={planHistory.length > 0}
+                t={t}
                 language={settings.language}
             />
         )}
@@ -559,6 +543,7 @@ const App = () => {
                 onUpdateItem={handleUpdateShoppingItem}
                 onClearChecked={clearCheckedItems}
                 language={settings.language}
+                t={t}
             />
         )}
         {view === 'recipes' && (
@@ -570,6 +555,7 @@ const App = () => {
                 onDeleteRecipe={handleDeleteRecipe}
                 onAddMeal={handleAddMeal}
                 onSelectRecipe={(r) => setSelectedContext({ recipe: r })}
+                t={t}
                 language={settings.language}
             />
         )}
@@ -577,6 +563,7 @@ const App = () => {
             <StatsView 
                 plan={plan} 
                 recipes={recipes} 
+                t={t}
                 language={settings.language}
             />
         )}
@@ -589,6 +576,7 @@ const App = () => {
                 onUpdateRecipes={handleBulkUpdateRecipes}
                 onClearStats={handleClearStats}
                 onClearReviews={handleClearReviews}
+                t={t}
             />
         )}
       </main>
@@ -606,17 +594,18 @@ const App = () => {
             onUpdateServings={handleUpdateServings}
             onAddMeal={handleAddMeal}
             onRateMeal={handleRateMeal}
+            t={t}
             language={settings.language}
         />
       )}
 
       {/* Bottom Navigation */}
       <nav className="absolute bottom-0 left-0 right-0 bg-white/80 backdrop-blur-lg border-t border-gray-200 flex justify-around pb-safe pt-1 z-10">
-        <NavItem viewName="plan" icon={Icons.Plan} label={t.plan} />
-        <NavItem viewName="shop" icon={Icons.Shop} label={t.shop} />
-        <NavItem viewName="recipes" icon={Icons.Recipes} label={t.recipes} />
-        <NavItem viewName="stats" icon={Icons.Chart} label={t.stats} />
-        <NavItem viewName="settings" icon={Icons.Settings} label={t.settings} />
+        <NavItem viewName="plan" icon={Icons.Plan} label={t.nav_plan} />
+        <NavItem viewName="shop" icon={Icons.Shop} label={t.nav_shop} />
+        <NavItem viewName="recipes" icon={Icons.Recipes} label={t.nav_recipes} />
+        <NavItem viewName="stats" icon={Icons.Chart} label={t.nav_stats} />
+        <NavItem viewName="settings" icon={Icons.Settings} label={t.nav_settings} />
       </nav>
       
     </div>

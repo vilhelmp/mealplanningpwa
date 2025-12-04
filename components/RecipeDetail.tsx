@@ -14,124 +14,16 @@ interface RecipeDetailProps {
   onUpdateServings: (mealId: number, servings: number) => void;
   onAddMeal: (date: string, recipeId: number) => void;
   onRateMeal?: (id: number, rating: number, comment?: string) => void;
-  language: Language;
+  t: any;
+  language: string;
 }
 
-const TRANSLATIONS = {
-  [Language.EN]: {
-    ingredients: "Ingredients",
-    startCooking: "Start Cooking",
-    preview: "Steps",
-    step: "Step",
-    of: "of",
-    next: "Next",
-    prev: "Prev",
-    finish: "Finish!",
-    closeIng: "Close Ingredients",
-    servings: "srv", // Shortened
-    addToPlan: "Plan", // Shortened
-    selectDate: "Select Date",
-    confirmAdd: "Add",
-    takePhoto: "Photo",
-    generateImage: "AI Image",
-    close: "Close",
-    rateMeal: "Rate Meal",
-    commentPlaceholder: "Comments (optional)...",
-    saveRating: "Save",
-    nutritionTitle: "Nutrition",
-    calcNutrition: "Calculate",
-    calculating: "...",
-    noNutrition: "No data.",
-    cal: "Kcal",
-    prot: "Prot",
-    carb: "Carb",
-    sugar: "Sugar",
-    fat: "Fat",
-    satFat: "Sat",
-    unsatFat: "Unsat",
-    fiber: "Fiber",
-    salt: "Salt",
-    editMode: "Edit Mode",
-    saveChanges: "Save",
-    discardChanges: "Cancel",
-    addIngredient: "Add Ingredient",
-    addStep: "Add Step",
-    aiRefine: "AI Magic",
-    makeDetailed: "Make Detailed",
-    simplify: "Simplify",
-    refining: "Thinking...",
-    delete: "Delete",
-    cuisine: "Cuisine",
-    improve: "AI Improve",
-    improveTitle: "Suggested Improvement",
-    acceptImprovement: "Accept & Update",
-    rejectImprovement: "Discard",
-    improving: "Analyzing...",
-    viewVersion: "Version:",
-    current: "Current",
-    oldVersionWarning: "Viewing an old version. This recipe is read-only.",
-    reviewsForVersion: "Reviews for this version"
-  },
-  [Language.SV]: {
-    ingredients: "Ingredienser",
-    startCooking: "Laga",
-    preview: "Steg",
-    step: "Steg",
-    of: "av",
-    next: "Nästa",
-    prev: "Förra",
-    finish: "Klar!",
-    closeIng: "Stäng",
-    servings: "port",
-    addToPlan: "Planera",
-    selectDate: "Välj datum",
-    confirmAdd: "Lägg till",
-    takePhoto: "Fota",
-    generateImage: "AI Bild",
-    close: "Stäng",
-    rateMeal: "Betygsätt",
-    commentPlaceholder: "Kommentar (valfritt)...",
-    saveRating: "Spara",
-    nutritionTitle: "Näring",
-    calcNutrition: "Beräkna",
-    calculating: "...",
-    noNutrition: "Ingen data.",
-    cal: "Kcal",
-    prot: "Prot",
-    carb: "Kolh",
-    sugar: "Socker",
-    fat: "Fett",
-    satFat: "Mättat",
-    unsatFat: "Omättat",
-    fiber: "Fiber",
-    salt: "Salt",
-    editMode: "Redigera",
-    saveChanges: "Spara",
-    discardChanges: "Avbryt",
-    addIngredient: "Lägg till",
-    addStep: "Lägg till steg",
-    aiRefine: "AI Magi",
-    makeDetailed: "Mer detaljerad",
-    simplify: "Förenkla",
-    refining: "Tänker...",
-    delete: "Ta bort",
-    cuisine: "Kök",
-    improve: "AI Förbättra",
-    improveTitle: "Förslag på förbättring",
-    acceptImprovement: "Acceptera & Uppdatera",
-    rejectImprovement: "Avböj",
-    improving: "Analyserar...",
-    viewVersion: "Version:",
-    current: "Nuvarande",
-    oldVersionWarning: "Visar en gammal version. Detta recept är skrivskyddat.",
-    reviewsForVersion: "Omdömen för denna version"
-  }
-};
-
-export const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, recipes = [], meal, plan, settings, onClose, onUpdateRecipe, onUpdateServings, onAddMeal, onRateMeal, language }) => {
+export const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, recipes = [], meal, plan, settings, onClose, onUpdateRecipe, onUpdateServings, onAddMeal, onRateMeal, t, language }) => {
   const [isCooking, setIsCooking] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [showIngredientsOverlay, setShowIngredientsOverlay] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(false); // New Sidebar State
+  
   const [showDateSelect, setShowDateSelect] = useState(false);
   const [planDate, setPlanDate] = useState(new Date().toISOString().split('T')[0]);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
@@ -164,6 +56,9 @@ export const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, recipes = []
   // Track the ID or URL of the last AI generated image to enable replacement
   const lastGeneratedAiImageRef = useRef<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  
+  // Sidebar Refs for auto-scroll
+  const sidebarRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // When the main recipe prop changes, reset to viewing the latest version
@@ -189,6 +84,17 @@ export const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, recipes = []
       setCurrentImageIndex(0);
   }, [viewedRecipe.id]);
 
+  // Initialize sidebar open state based on screen width on mount
+  useEffect(() => {
+      if (typeof window !== 'undefined') {
+          // If large screen, maybe default open? Let's keep closed for immersion but available.
+          // Or responsive default: true for desktop.
+          if (window.innerWidth >= 768) {
+              setShowSidebar(true);
+          }
+      }
+  }, []);
+
   // Derive unique cuisines
   const existingCuisines = useMemo(() => {
     const unique = new Map<string, string>(); // lowercase -> display
@@ -204,8 +110,6 @@ export const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, recipes = []
     });
     return Array.from(unique.values()).sort();
   }, [recipes]);
-
-  const t = TRANSLATIONS[language];
 
   // Calculate ingredient scaling
   const scale = currentServings / viewedRecipe.servings_default;
@@ -445,6 +349,13 @@ export const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, recipes = []
       setIsEditing(false);
   };
 
+  const handleSidebarClick = (index: number) => {
+      setCurrentStep(index);
+      if (window.innerWidth < 768) {
+          setShowSidebar(false); // Auto close on mobile
+      }
+  };
+
   // --- Cooking Mode Render (Immersive) ---
   if (isCooking) {
       const stepCount = viewedRecipe.instructions.length;
@@ -453,7 +364,7 @@ export const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, recipes = []
       return (
           <div className="fixed inset-0 z-[60] bg-white flex flex-col animate-in fade-in duration-300">
               {/* Top Bar */}
-              <div className="flex items-center justify-between p-3 border-b border-gray-100 bg-white">
+              <div className="flex items-center justify-between p-3 border-b border-gray-100 bg-white z-20 shadow-sm relative">
                   <div className="flex items-center gap-2">
                        <Button variant="ghost" onClick={() => setIsCooking(false)} className="!p-1.5 h-8 w-8">
                            <Icons.X className="w-5 h-5" />
@@ -462,69 +373,121 @@ export const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, recipes = []
                            <h2 className="font-bold text-xs text-nordic-secondary">{t.step} {currentStep + 1} / {stepCount}</h2>
                        </div>
                   </div>
-                  <Button variant="secondary" onClick={() => setShowIngredientsOverlay(!showIngredientsOverlay)} className="text-[10px] !py-1.5 !px-3 h-8">
-                      {t.ingredients}
-                  </Button>
+                  
+                  {/* Progress Bar (Integrated) */}
+                  <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-100">
+                      <div className="h-full bg-nordic-accent transition-all duration-300" style={{ width: `${progress}%` }} />
+                  </div>
+
+                  <div className="flex gap-2">
+                      <Button variant="secondary" onClick={() => setShowIngredientsOverlay(!showIngredientsOverlay)} className="text-[10px] !py-1.5 !px-3 h-8">
+                          {t.ingredients}
+                      </Button>
+                      <Button 
+                          variant={showSidebar ? 'primary' : 'secondary'} 
+                          onClick={() => setShowSidebar(!showSidebar)} 
+                          className="!p-1.5 h-8 w-8"
+                      >
+                          <Icons.List className="w-4 h-4" />
+                      </Button>
+                  </div>
               </div>
 
-              {/* Progress Bar */}
-              <div className="w-full h-1 bg-gray-100">
-                  <div className="h-full bg-nordic-accent transition-all duration-300" style={{ width: `${progress}%` }} />
-              </div>
-
-              {/* Main Content */}
-              <div className="flex-1 overflow-y-auto p-6 flex flex-col justify-center items-center text-center relative">
-                   {/* Ingredients Overlay */}
-                   {showIngredientsOverlay && (
-                       <div className="absolute inset-0 bg-white/95 backdrop-blur z-10 p-6 overflow-y-auto text-left animate-in slide-in-from-top-10">
-                           <h3 className="font-bold text-xl mb-4 text-nordic-primary">{t.ingredients}</h3>
-                           <ul className="space-y-3">
-                               {viewedRecipe.ingredients.map((ing, idx) => (
-                                   <li key={idx} className="flex items-baseline justify-between border-b border-gray-100 pb-2">
-                                       <span className="font-medium text-slate-800">{ing.item_name}</span>
-                                       <span className="text-slate-500">
-                                           {parseFloat((ing.quantity * scale).toFixed(2))} {ing.unit}
-                                       </span>
-                                   </li>
-                               ))}
-                           </ul>
-                           <Button className="mt-8 w-full" onClick={() => setShowIngredientsOverlay(false)}>{t.closeIng}</Button>
-                       </div>
-                   )}
-
-                   <div className="max-w-md">
-                       <p className="text-2xl md:text-3xl font-bold text-slate-800 leading-tight">
-                           {viewedRecipe.instructions[currentStep]}
-                       </p>
-                   </div>
-              </div>
-
-              {/* Controls */}
-              <div className="p-3 border-t border-gray-100 bg-gray-50 pb-safe grid grid-cols-2 gap-3">
-                  <Button 
-                    variant="secondary" 
-                    onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
-                    disabled={currentStep === 0}
-                    className="h-14 text-base disabled:opacity-50"
+              <div className="flex-1 flex overflow-hidden relative">
+                  {/* Sidebar Navigation */}
+                  <div 
+                      ref={sidebarRef}
+                      className={`
+                          absolute inset-y-0 left-0 z-10 w-64 bg-gray-50 border-r border-gray-100 overflow-y-auto transition-transform duration-300
+                          ${showSidebar ? 'translate-x-0' : '-translate-x-full'}
+                          md:relative md:translate-x-0 md:w-64 md:flex-shrink-0
+                          ${!showSidebar && 'md:hidden'} 
+                      `}
                   >
-                      <Icons.ArrowLeft className="w-5 h-5" /> {t.prev}
-                  </Button>
-                  {currentStep < stepCount - 1 ? (
-                      <Button 
-                        onClick={() => setCurrentStep(currentStep + 1)}
-                        className="h-14 text-base"
-                      >
-                          {t.next} <Icons.ArrowRight className="w-5 h-5" />
-                      </Button>
-                  ) : (
-                      <Button 
-                        variant="primary"
-                        onClick={() => setIsCooking(false)}
-                        className="h-14 text-base"
-                      >
-                          {t.finish} <Icons.Check className="w-5 h-5" />
-                      </Button>
-                  )}
+                      <div className="p-4 space-y-2">
+                          <h3 className="text-xs font-bold uppercase text-nordic-muted mb-4 px-2">{t.preview}</h3>
+                          {viewedRecipe.instructions.map((step, index) => {
+                              const isActive = index === currentStep;
+                              const isCompleted = index < currentStep;
+                              return (
+                                  <button
+                                      key={index}
+                                      onClick={() => handleSidebarClick(index)}
+                                      className={`w-full text-left p-3 rounded-xl text-xs transition-all duration-200 border border-transparent
+                                          ${isActive ? 'bg-white shadow-md border-gray-100 text-nordic-primary font-bold' : ''}
+                                          ${!isActive && isCompleted ? 'text-gray-400 bg-gray-100/50' : ''}
+                                          ${!isActive && !isCompleted ? 'text-gray-600 hover:bg-gray-100' : ''}
+                                      `}
+                                  >
+                                      <div className="flex gap-2">
+                                          <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-bold ${isActive ? 'bg-nordic-primary text-white' : 'bg-gray-200 text-gray-500'}`}>
+                                              {index + 1}
+                                          </span>
+                                          <span className="line-clamp-2 leading-relaxed flex-1">{step}</span>
+                                      </div>
+                                  </button>
+                              );
+                          })}
+                      </div>
+                  </div>
+
+                  {/* Main Content */}
+                  <div className="flex-1 flex flex-col relative overflow-hidden bg-white">
+                       {/* Ingredients Overlay - Positioned over content area only */}
+                       {showIngredientsOverlay && (
+                           <div className="absolute inset-0 bg-white/95 backdrop-blur z-20 p-6 overflow-y-auto text-left animate-in slide-in-from-top-10">
+                               <h3 className="font-bold text-xl mb-4 text-nordic-primary">{t.ingredients}</h3>
+                               <ul className="space-y-3">
+                                   {viewedRecipe.ingredients.map((ing, idx) => (
+                                       <li key={idx} className="flex items-baseline justify-between border-b border-gray-100 pb-2">
+                                           <span className="font-medium text-slate-800">{ing.item_name}</span>
+                                           <span className="text-slate-500">
+                                               {parseFloat((ing.quantity * scale).toFixed(2))} {ing.unit}
+                                           </span>
+                                       </li>
+                                   ))}
+                               </ul>
+                               <Button className="mt-8 w-full" onClick={() => setShowIngredientsOverlay(false)}>{t.closeIng}</Button>
+                           </div>
+                       )}
+
+                       <div className="flex-1 overflow-y-auto p-6 flex flex-col justify-center items-center text-center">
+                           <div className="max-w-md w-full">
+                               <span className="inline-block text-6xl font-black text-gray-100 mb-6 select-none">{currentStep + 1}</span>
+                               <p className="text-xl md:text-3xl font-bold text-slate-800 leading-tight">
+                                   {viewedRecipe.instructions[currentStep]}
+                               </p>
+                           </div>
+                       </div>
+
+                       {/* Controls */}
+                       <div className="p-3 border-t border-gray-100 bg-gray-50 pb-safe grid grid-cols-2 gap-3 shrink-0 z-20">
+                          <Button 
+                            variant="secondary" 
+                            onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
+                            disabled={currentStep === 0}
+                            className="h-14 text-base disabled:opacity-50"
+                          >
+                              <Icons.ArrowLeft className="w-5 h-5" /> {t.prev}
+                          </Button>
+                          {currentStep < stepCount - 1 ? (
+                              <Button 
+                                onClick={() => setCurrentStep(currentStep + 1)}
+                                className="h-14 text-base"
+                              >
+                                  {t.next} <Icons.ArrowRight className="w-5 h-5" />
+                              </Button>
+                          ) : (
+                              <Button 
+                                variant="primary"
+                                onClick={() => setIsCooking(false)}
+                                className="h-14 text-base"
+                              >
+                                  {t.finish} <Icons.Check className="w-5 h-5" />
+                              </Button>
+                          )}
+                      </div>
+                  </div>
               </div>
           </div>
       );

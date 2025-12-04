@@ -1,6 +1,9 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { AppSettings, Language, Store, SHOPPING_CATEGORIES, Recipe, Ingredient, MealPlanItem } from '../types';
 import { Card, Button, Input, Icons, Modal } from './Shared';
+import { translateRecipe, translateShoppingItems, translateStrings, generateInterfaceTranslations } from '../services/geminiService';
+import { storage } from '../services/storage';
+import { BASE_TRANSLATIONS } from '../services/translations';
 
 interface SettingsViewProps {
   settings: AppSettings;
@@ -10,100 +13,23 @@ interface SettingsViewProps {
   onUpdateRecipes: (recipes: Recipe[]) => Promise<void>;
   onClearStats: () => Promise<void>;
   onClearReviews: () => Promise<void>;
+  t: any;
 }
 
-const translations = {
-  [Language.EN]: {
-    title: "Settings",
-    language: "Language",
-    interfaceLanguage: "Interface language",
-    household: "Household Defaults",
-    adults: "Adults",
-    kids: "Kids",
-    pantryStaples: "Pantry Staples",
-    pantryDesc: "Items to always ignore on shopping lists.",
-    addStaple: "Add",
-    staplePlaceholder: "e.g. Salt, Oil...",
-    stores: "Stores & Layouts",
-    storesDesc: "Manage stores and aisle order.",
-    addStore: "Add Store",
-    storePlaceholder: "e.g. Supermarket A...",
-    editLayout: "Edit Layout",
-    layoutTitle: "Category Order",
-    layoutDesc: "Touch & hold to drag categories into aisle order.",
-    deleteStore: "Delete",
-    save: "Save",
-    version: "HomeChef Hub v0.1.0 (PWA)",
-    ingredientsDb: "Ingredients Database",
-    ingredientsDesc: "Manage typical units and categories for ingredients across all recipes.",
-    manageIngredients: "Manage Ingredients",
-    ingModalTitle: "Ingredients",
-    searchIngredients: "Search ingredients...",
-    typicalUnit: "Typical Unit (Locked)",
-    ingCount: "recipes",
-    saveIng: "Update",
-    cancelIng: "Cancel",
-    dataManagement: "Data Management",
-    clearStats: "Clear Statistics",
-    clearStatsDesc: "Delete all past meal history and statistics.",
-    clearReviews: "Clear Reviews",
-    clearReviewsDesc: "Remove all ratings and comments from past meals.",
-    exportData: "Export Data",
-    exportDesc: "Download your recipes and meal history as JSON files.",
-    exportRecipes: "Export Recipes",
-    exportHistory: "Export Meal History",
-    areYouSure: "Are you sure?",
-    clearStatsConfirm: "This will permanently delete your meal history. You cannot undo this.",
-    clearReviewsConfirm: "This will permanently delete all your meal ratings and comments. You cannot undo this.",
-    delete: "Delete",
-    cancel: "Cancel"
-  },
-  [Language.SV]: {
-    title: "Inställningar",
-    language: "Språk",
-    interfaceLanguage: "Gränssnittsspråk",
-    household: "Hushållsinställningar",
-    adults: "Vuxna",
-    kids: "Barn",
-    pantryStaples: "Skafferi & Basvaror",
-    pantryDesc: "Varor som inte ska läggas på inköpslistan.",
-    addStaple: "Lägg till",
-    staplePlaceholder: "t.ex. Salt, Olja...",
-    stores: "Butiker & Layout",
-    storesDesc: "Hantera butiker och gångordning.",
-    addStore: "Ny Butik",
-    storePlaceholder: "t.ex. ICA Maxi...",
-    editLayout: "Redigera Layout",
-    layoutTitle: "Kategoriordning",
-    layoutDesc: "Håll och dra för att ändra ordning.",
-    deleteStore: "Ta bort",
-    save: "Spara",
-    version: "HomeChef Hub v0.1.0 (PWA)",
-    ingredientsDb: "Ingrediensdatabas",
-    ingredientsDesc: "Hantera enheter och kategorier för ingredienser i alla recept.",
-    manageIngredients: "Hantera Ingredienser",
-    ingModalTitle: "Ingredienser",
-    searchIngredients: "Sök ingredienser...",
-    typicalUnit: "Vanlig enhet (Låst)",
-    ingCount: "recept",
-    saveIng: "Uppdatera",
-    cancelIng: "Avbryt",
-    dataManagement: "Datahantering",
-    clearStats: "Rensa Statistik",
-    clearStatsDesc: "Radera all historik och statistik.",
-    clearReviews: "Rensa Omdömen",
-    clearReviewsDesc: "Ta bort alla betyg och kommentarer.",
-    exportData: "Exportera Data",
-    exportDesc: "Ladda ner dina recept och mathistorik som JSON-filer.",
-    exportRecipes: "Exportera Recept",
-    exportHistory: "Exportera Mathistorik",
-    areYouSure: "Är du säker?",
-    clearStatsConfirm: "Detta kommer permanent radera din mathistorik. Detta kan inte ångras.",
-    clearReviewsConfirm: "Detta kommer permanent radera alla dina betyg och kommentarer. Detta kan inte ångras.",
-    delete: "Radera",
-    cancel: "Avbryt"
-  }
-};
+const LANGUAGES = [
+    { code: 'en', name: 'English' },
+    { code: 'sv', name: 'Svenska' },
+    { code: 'de', name: 'Deutsch' },
+    { code: 'fr', name: 'Français' },
+    { code: 'es', name: 'Español' },
+    { code: 'it', name: 'Italiano' },
+    { code: 'pt', name: 'Português' },
+    { code: 'nl', name: 'Nederlands' },
+    { code: 'pl', name: 'Polski' },
+    { code: 'da', name: 'Dansk' },
+    { code: 'no', name: 'Norsk' },
+    { code: 'fi', name: 'Suomi' },
+];
 
 interface AggregatedIngredient {
     name: string; // Lowercase key
@@ -113,7 +39,7 @@ interface AggregatedIngredient {
     count: number;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, recipes, plan, onUpdateRecipes, onClearStats, onClearReviews }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, recipes, plan, onUpdateRecipes, onClearStats, onClearReviews, t }) => {
   const [newStaple, setNewStaple] = useState('');
   const [newStoreName, setNewStoreName] = useState('');
   
@@ -133,12 +59,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
   const [showClearStatsConfirm, setShowClearStatsConfirm] = useState(false);
   const [showClearReviewsConfirm, setShowClearReviewsConfirm] = useState(false);
 
+  // Translation State
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [translationProgress, setTranslationProgress] = useState(0);
+
+  // Language Modal State
+  const [isLangModalOpen, setIsLangModalOpen] = useState(false);
+  const [langSearch, setLangSearch] = useState('');
+  const [isGeneratingLang, setIsGeneratingLang] = useState(false);
+
   // Drag State for Category Sorting
   const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
   const [dragOverItemIndex, setDragOverItemIndex] = useState<number | null>(null);
   const longPressTimer = useRef<any>(null);
-
-  const t = translations[settings.language] || translations[Language.EN];
 
   // Derive unique ingredients list
   const uniqueIngredients = useMemo(() => {
@@ -161,11 +94,57 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
         });
     });
     return Array.from(map.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
-  }, [recipes, isIngModalOpen]); // Recalculate when modal opens to ensure fresh data
+  }, [recipes, isIngModalOpen]); 
 
   const filteredIngredients = uniqueIngredients.filter(i => 
     i.displayName.toLowerCase().includes(ingSearch.toLowerCase())
   );
+
+  const filteredLanguages = LANGUAGES.filter(l => 
+    l.name.toLowerCase().includes(langSearch.toLowerCase()) || 
+    l.code.toLowerCase().includes(langSearch.toLowerCase())
+  );
+
+  const isLangSaved = (code: string) => {
+      // Built-in or existing in custom_languages
+      return (code === 'en' || code === 'sv' || (settings.custom_languages && !!settings.custom_languages[code]));
+  }
+
+  const handleSelectLanguage = async (code: string) => {
+      // 1. Switch Pantry Staples if cached
+      let newStaples = settings.pantry_staples;
+      if (settings.custom_staples && settings.custom_staples[code]) {
+          newStaples = settings.custom_staples[code];
+      }
+
+      // 2. If built-in (en/sv), just switch
+      if (code === 'en' || code === 'sv') {
+          onUpdate({ ...settings, language: code, pantry_staples: newStaples });
+          setIsLangModalOpen(false);
+          return;
+      }
+      
+      // 3. If custom existing, switch
+      if (settings.custom_languages && settings.custom_languages[code]) {
+          onUpdate({ ...settings, language: code, pantry_staples: newStaples });
+          setIsLangModalOpen(false);
+          return;
+      }
+
+      // 4. If new, generate UI
+      setIsGeneratingLang(true);
+      try {
+          const newPack = await generateInterfaceTranslations(code, BASE_TRANSLATIONS[Language.EN]);
+          // Merge into settings
+          const newCustomLangs = { ...(settings.custom_languages || {}), [code]: newPack };
+          onUpdate({ ...settings, custom_languages: newCustomLangs, language: code, pantry_staples: newStaples });
+          setIsLangModalOpen(false);
+      } catch (e) {
+          alert('Failed to generate language pack.');
+      } finally {
+          setIsGeneratingLang(false);
+      }
+  };
 
   const handleEditIngStart = (ing: AggregatedIngredient) => {
       setEditingIng(ing);
@@ -216,7 +195,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
     e.preventDefault();
     if (!newStaple.trim()) return;
     
-    // Avoid duplicates
     if (settings.pantry_staples.some(s => s.toLowerCase() === newStaple.trim().toLowerCase())) {
         setNewStaple('');
         return;
@@ -262,7 +240,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
 
   const openStoreLayout = (store: Store) => {
       setEditingStore(store);
-      // Ensure all current categories are present in the order, append new ones at the end if missing
       const existingOrder = store.category_order || [];
       const missingCategories = SHOPPING_CATEGORIES.filter(c => !existingOrder.includes(c));
       setTempCategoryOrder([...existingOrder, ...missingCategories]);
@@ -289,6 +266,166 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
       setShowClearReviewsConfirm(false);
   };
 
+  const handleTranslateContent = async () => {
+      if (isTranslating) return;
+      setIsTranslating(true);
+      setTranslationProgress(0);
+
+      try {
+          const targetLang = settings.language;
+          const totalItems = recipes.length + 2; 
+          let completed = 0;
+
+          // 1. Recipes
+          const recipesToUpdate: Recipe[] = [];
+          
+          for (const recipe of recipes) {
+              if (recipe.lang === targetLang) {
+                  // Already current language
+                  completed++;
+                  setTranslationProgress((completed / totalItems) * 100);
+                  continue;
+              }
+
+              // Check cache
+              if (recipe.translations && recipe.translations[targetLang]) {
+                  const cached = recipe.translations[targetLang];
+                  // Save current content to cache for the OLD language before switching
+                  const oldLang = recipe.lang || 'en';
+                  const currentContent = {
+                      title: recipe.title,
+                      description: recipe.description,
+                      instructions: recipe.instructions,
+                      ingredients: recipe.ingredients,
+                      cuisine: recipe.cuisine
+                  };
+                  
+                  recipesToUpdate.push({
+                      ...recipe,
+                      ...cached,
+                      lang: targetLang,
+                      translations: {
+                          ...recipe.translations,
+                          [oldLang]: currentContent
+                      }
+                  });
+              } else {
+                  // Call AI
+                  const tr = await translateRecipe(recipe, targetLang);
+                  // Save current content to cache for the OLD language
+                  const oldLang = recipe.lang || 'en';
+                  const currentContent = {
+                      title: recipe.title,
+                      description: recipe.description,
+                      instructions: recipe.instructions,
+                      ingredients: recipe.ingredients,
+                      cuisine: recipe.cuisine
+                  };
+                  // Also save the NEW content to cache for future
+                  const newContent = {
+                      title: tr.title,
+                      description: tr.description,
+                      instructions: tr.instructions,
+                      ingredients: tr.ingredients,
+                      cuisine: tr.cuisine
+                  };
+
+                  recipesToUpdate.push({
+                      ...tr,
+                      translations: {
+                          ...(recipe.translations || {}),
+                          [oldLang]: currentContent,
+                          [targetLang]: newContent
+                      }
+                  });
+              }
+              completed++;
+              setTranslationProgress((completed / totalItems) * 100);
+          }
+          
+          if (recipesToUpdate.length > 0) {
+              await onUpdateRecipes(recipesToUpdate);
+          }
+
+          // 2. Shopping List
+          const currentList = await storage.getShoppingList();
+          const listUpdates: any[] = [];
+          
+          for (const item of currentList) {
+              if (item.lang === targetLang) continue;
+              
+              // Check cache
+              if (item.translations && item.translations[targetLang]) {
+                  const cached = item.translations[targetLang];
+                  listUpdates.push({ ...item, item_name: cached.item_name, unit: cached.unit, lang: targetLang });
+                  continue;
+              }
+              
+              // We'll batch call AI for remaining items later if needed, but for simplicity here we skip batching logic inside this loop
+              // A real implementation would filter uncached items and batch translate them.
+              // For now, let's assume we just want to leverage the bulk translate function if list is small.
+          }
+          
+          // Identify items needing AI
+          const itemsNeedingAI = currentList.filter(i => i.lang !== targetLang && !(i.translations && i.translations[targetLang]));
+          
+          if (itemsNeedingAI.length > 0) {
+              const translatedItems = await translateShoppingItems(itemsNeedingAI, targetLang);
+              
+              // Merge results
+              for (const tr of translatedItems) {
+                  const original = currentList.find(i => i.id === tr.id);
+                  if (original) {
+                      const oldLang = original.lang || 'en';
+                      listUpdates.push({
+                          ...tr,
+                          translations: {
+                              ...(original.translations || {}),
+                              [oldLang]: { item_name: original.item_name, unit: original.unit },
+                              [targetLang]: { item_name: tr.item_name, unit: tr.unit }
+                          }
+                      });
+                  }
+              }
+          }
+          
+          // Merge cached updates
+          const finalShoppingList = currentList.map(item => {
+              const update = listUpdates.find(u => u.id === item.id);
+              return update || item;
+          });
+          
+          if (listUpdates.length > 0) {
+              await storage.saveShoppingList(finalShoppingList);
+          }
+          
+          completed++;
+          setTranslationProgress((completed / totalItems) * 100);
+
+          // 3. Staples
+          // Check if we have cached staples
+          if (settings.custom_staples && settings.custom_staples[targetLang]) {
+              onUpdate({ ...settings, pantry_staples: settings.custom_staples[targetLang] });
+          } else {
+              const translatedStaples = await translateStrings(settings.pantry_staples, targetLang);
+              const newCustomStaples = {
+                  ...(settings.custom_staples || {}),
+                  [targetLang]: translatedStaples,
+                  // Also cache the source just in case
+                  [settings.language || 'en']: settings.pantry_staples
+              };
+              onUpdate({ ...settings, pantry_staples: translatedStaples, custom_staples: newCustomStaples });
+          }
+          completed++;
+          setTranslationProgress(100);
+
+      } catch (e) {
+          console.error("Translation failed", e);
+      } finally {
+          setIsTranslating(false);
+      }
+  };
+
   // --- Export Logic ---
   const downloadFile = (content: string, fileName: string) => {
       const blob = new Blob([content], { type: "application/json" });
@@ -307,7 +444,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
   };
 
   const handleExportHistory = () => {
-      // Export entire plan (which includes history and future)
       const dataStr = JSON.stringify(plan, null, 2);
       downloadFile(dataStr, `homechef_history_${new Date().toISOString().split('T')[0]}.json`);
   };
@@ -322,15 +458,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
       if (draggedItemIndex === null) return;
       if (draggedItemIndex !== index) {
           setDragOverItemIndex(index);
-          
-          // Reorder locally for visual feedback immediately
           const newOrder = [...tempCategoryOrder];
           const draggedItem = newOrder[draggedItemIndex];
           newOrder.splice(draggedItemIndex, 1);
           newOrder.splice(index, 0, draggedItem);
-          
           setTempCategoryOrder(newOrder);
-          setDraggedItemIndex(index); // Update index to track the item's new position
+          setDraggedItemIndex(index); 
       }
   };
 
@@ -339,11 +472,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
       setDragOverItemIndex(null);
   };
   
-  // Touch support for drag
   const handleTouchStart = (index: number) => {
       longPressTimer.current = setTimeout(() => {
           handleDragStart(index);
-      }, 300); // 300ms delay for touch-hold
+      }, 300);
   };
 
   const handleTouchEnd = () => {
@@ -353,12 +485,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
 
   const handleTouchMove = (e: React.TouchEvent) => {
       if (draggedItemIndex === null) return;
-      e.preventDefault(); // Prevent scrolling
-      
+      e.preventDefault(); 
       const touch = e.touches[0];
       const target = document.elementFromPoint(touch.clientX, touch.clientY);
       const row = target?.closest('[data-index]');
-      
       if (row) {
           const index = parseInt(row.getAttribute('data-index') || '-1');
           if (index !== -1) {
@@ -370,7 +500,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
   return (
     <div className="pb-24 space-y-3">
       <div className="px-1">
-        <h1 className="text-xl font-bold text-nordic-text">{t.title}</h1>
+        <h1 className="text-xl font-bold text-nordic-text">{t.settings_title}</h1>
       </div>
 
       <Card className="divide-y divide-gray-100 rounded-xl">
@@ -380,22 +510,73 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
             <h3 className="font-medium text-sm">{t.language}</h3>
             <p className="text-[10px] text-gray-500">{t.interfaceLanguage}</p>
           </div>
-          <div className="flex bg-gray-100 p-1 rounded-lg">
-             <button 
-                onClick={() => onUpdate({...settings, language: Language.SV})}
-                className={`px-3 py-1 text-xs rounded-md transition-all ${settings.language === Language.SV ? 'bg-white shadow-sm font-medium' : 'text-gray-500'}`}
-             >
-                SV
-             </button>
-             <button 
-                onClick={() => onUpdate({...settings, language: Language.EN})}
-                className={`px-3 py-1 text-xs rounded-md transition-all ${settings.language === Language.EN ? 'bg-white shadow-sm font-medium' : 'text-gray-500'}`}
-             >
-                EN
-             </button>
-          </div>
+          <Button variant="secondary" onClick={() => setIsLangModalOpen(true)} className="!py-1.5 !px-3 h-8 text-xs font-medium">
+             <span className="uppercase">{settings.language}</span>
+             <Icons.ChevronDown className="w-3 h-3 ml-1" />
+          </Button>
         </div>
 
+        {/* Translation Section */}
+        <div className="p-3">
+            <h3 className="font-medium text-sm">{t.translateTitle}</h3>
+            <p className="text-[10px] text-gray-500 mb-3">{t.translateDesc}</p>
+            <Button 
+                variant="secondary" 
+                onClick={handleTranslateContent} 
+                disabled={isTranslating} 
+                className="w-full text-xs h-9 relative overflow-hidden"
+            >
+                <div className={`absolute inset-0 bg-nordic-primary/10 transition-all duration-300`} style={{ width: `${translationProgress}%` }} />
+                <span className="relative z-10 flex items-center gap-2">
+                    {isTranslating ? (
+                        <>
+                           <div className="w-3 h-3 border-2 border-gray-300 border-t-nordic-primary rounded-full animate-spin" />
+                           {t.translating} ({Math.round(translationProgress)}%)
+                        </>
+                    ) : (
+                        <><Icons.Sparkles className="w-3.5 h-3.5 text-nordic-accent" /> {t.translateBtn}</>
+                    )}
+                </span>
+            </Button>
+        </div>
+
+        {/* AI Provider Section */}
+        <div className="p-3">
+            <h3 className="font-medium text-sm mb-2">{t.aiSettings}</h3>
+            <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">{t.provider}</span>
+                    <div className="flex bg-gray-100 p-1 rounded-lg">
+                        <button 
+                            onClick={() => onUpdate({...settings, ai_provider: 'gemini'})}
+                            className={`px-3 py-1 text-xs rounded-md transition-all ${settings.ai_provider === 'gemini' ? 'bg-white shadow-sm font-medium text-nordic-primary' : 'text-gray-500'}`}
+                        >
+                            Gemini
+                        </button>
+                        <button 
+                            onClick={() => onUpdate({...settings, ai_provider: 'openai'})}
+                            className={`px-3 py-1 text-xs rounded-md transition-all ${settings.ai_provider === 'openai' ? 'bg-white shadow-sm font-medium text-nordic-primary' : 'text-gray-500'}`}
+                        >
+                            OpenAI
+                        </button>
+                    </div>
+                </div>
+                {settings.ai_provider === 'openai' && (
+                    <div className="animate-in slide-in-from-top-1">
+                        <label className="text-[10px] text-gray-500 mb-1 block">{t.openaiKey}</label>
+                        <Input 
+                            type="password"
+                            value={settings.openai_api_key || ''}
+                            onChange={(e: any) => onUpdate({...settings, openai_api_key: e.target.value})}
+                            placeholder={t.keyPlaceholder}
+                            className="!py-1.5 !px-2 text-sm"
+                        />
+                    </div>
+                )}
+            </div>
+        </div>
+
+        {/* Other Sections Omitted for Brevity (unchanged from previous output) */}
         {/* Ingredients Database Section */}
         <div className="p-3">
             <h3 className="font-medium text-sm">{t.ingredientsDb}</h3>
@@ -497,7 +678,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
         </div>
       </Card>
       
-      {/* Export Section */}
+      {/* Export & Data Management sections (unchanged) */}
       <Card className="rounded-xl p-3 bg-indigo-50/50 border-indigo-100">
           <h3 className="font-bold text-sm text-indigo-900 mb-2">{t.exportData}</h3>
           <p className="text-[10px] text-indigo-700/70 mb-3">{t.exportDesc}</p>
@@ -511,7 +692,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
           </div>
       </Card>
 
-      {/* Data Management Section */}
       <Card className="rounded-xl p-3 border-red-100 bg-red-50/30">
           <h3 className="font-bold text-sm text-red-900 mb-2">{t.dataManagement}</h3>
           
@@ -534,13 +714,56 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
          <p className="text-[10px] text-gray-400">{t.version}</p>
       </div>
 
+      {/* Language Modal */}
+      <Modal isOpen={isLangModalOpen} onClose={() => setIsLangModalOpen(false)} title={t.selectLanguage}>
+           <div className="h-[60vh] flex flex-col">
+               <div className="mb-4">
+                   <Input 
+                      placeholder={t.searchLanguage}
+                      value={langSearch}
+                      onChange={(e: any) => setLangSearch(e.target.value)}
+                      className="text-sm"
+                   />
+               </div>
+               {isGeneratingLang ? (
+                   <div className="flex-1 flex flex-col items-center justify-center text-nordic-muted">
+                        <Icons.Sparkles className="w-8 h-8 animate-spin mb-2" />
+                        <p>{t.generatingPack}</p>
+                   </div>
+               ) : (
+                   <div className="flex-1 overflow-y-auto space-y-1">
+                       {filteredLanguages.map(lang => {
+                           const saved = isLangSaved(lang.code);
+                           return (
+                               <button 
+                                   key={lang.code} 
+                                   onClick={() => handleSelectLanguage(lang.code)}
+                                   className={`w-full text-left p-3 rounded-xl flex items-center justify-between transition-colors ${settings.language === lang.code ? 'bg-nordic-primary text-white' : 'hover:bg-gray-50'}`}
+                               >
+                                   <div className="flex items-center gap-2">
+                                       <span className="font-medium">{lang.name}</span>
+                                       {saved && (
+                                           <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase ${settings.language === lang.code ? 'bg-white/20 text-white' : 'bg-green-100 text-green-700'}`}>
+                                               Saved
+                                           </span>
+                                       )}
+                                   </div>
+                                   <span className={`text-xs uppercase ${settings.language === lang.code ? 'text-white/80' : 'text-gray-400'}`}>{lang.code}</span>
+                               </button>
+                           );
+                       })}
+                   </div>
+               )}
+           </div>
+      </Modal>
+
       {/* Confirmation Modal for Clear Stats */}
       <Modal isOpen={showClearStatsConfirm} onClose={() => setShowClearStatsConfirm(false)} title={t.areYouSure}>
           <div className="space-y-4">
               <p className="text-sm text-gray-600">{t.clearStatsConfirm}</p>
               <div className="flex gap-2">
                   <Button variant="danger" onClick={confirmClearStats} className="flex-1">
-                      {t.delete}
+                      {t.deleteGeneric}
                   </Button>
                   <Button variant="secondary" onClick={() => setShowClearStatsConfirm(false)} className="flex-1">
                       {t.cancel}
@@ -555,7 +778,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
               <p className="text-sm text-gray-600">{t.clearReviewsConfirm}</p>
               <div className="flex gap-2">
                   <Button variant="danger" onClick={confirmClearReviews} className="flex-1">
-                      {t.delete}
+                      {t.deleteGeneric}
                   </Button>
                   <Button variant="secondary" onClick={() => setShowClearReviewsConfirm(false)} className="flex-1">
                       {t.cancel}
@@ -604,17 +827,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
       </Modal>
 
       {/* Ingredients Management Modal */}
-      <Modal isOpen={isIngModalOpen} onClose={() => setIngModalOpen(false)} title={t.ingModalTitle} padding="p-0">
+      <Modal isOpen={isIngModalOpen} onClose={() => setIngModalOpen(false)} padding="p-0">
           <div className="flex flex-col h-[80vh]">
-              <div className="p-4 border-b border-gray-100">
-                  <Input 
-                      placeholder={t.searchIngredients}
-                      value={ingSearch}
-                      onChange={(e: any) => setIngSearch(e.target.value)}
-                      className="text-sm"
-                  />
+              <div className="flex flex-col border-b border-gray-100">
+                  <div className="flex items-center justify-between p-4 sm:p-6 pb-2">
+                    <h2 className="text-xl font-bold text-nordic-text">{t.ingModalTitle}</h2>
+                    <button onClick={() => setIngModalOpen(false)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
+                        <Icons.X className="w-5 h-5 text-gray-500" />
+                    </button>
+                  </div>
+                  <div className="px-4 pb-4 sm:px-6 sm:pb-6">
+                    <Input 
+                        placeholder={t.searchIngredients}
+                        value={ingSearch}
+                        onChange={(e: any) => setIngSearch(e.target.value)}
+                        className="text-sm"
+                    />
+                  </div>
               </div>
-              <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-2">
                   {filteredIngredients.map(ing => {
                       const isEditing = editingIng?.name === ing.name;
                       return (

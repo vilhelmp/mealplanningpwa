@@ -5,50 +5,11 @@ import { Card, Icons } from './Shared';
 interface StatsViewProps {
   plan: MealPlanItem[];
   recipes: Recipe[];
-  language: Language;
+  t: any;
+  language: string;
 }
 
-const TRANSLATIONS = {
-  [Language.EN]: {
-    title: "Statistics",
-    subtitle: "Insights based on your meal history",
-    mostPopular: "Most Frequent",
-    bestRated: "Best Rated",
-    topCuisine: "Top Cuisine",
-    dietary: "Dietary Breakdown",
-    vegetarianFreq: "Vegetarian Frequency",
-    meatCons: "Protein Sources",
-    meals: "meals",
-    oneIn: "Roughly 1 in",
-    noData: "Not enough history to calculate statistics. Cook more meals!",
-    beef: "Beef",
-    pork: "Pork",
-    poultry: "Poultry",
-    fish: "Fish",
-    vegetarian: "Vegetarian"
-  },
-  [Language.SV]: {
-    title: "Statistik",
-    subtitle: "Insikter baserat på din mathistorik",
-    mostPopular: "Mest Frekvent",
-    bestRated: "Bäst Betyg",
-    topCuisine: "Favoritkök",
-    dietary: "Kostfördelning",
-    vegetarianFreq: "Vegetarisk Frekvens",
-    meatCons: "Proteinkällor",
-    meals: "måltider",
-    oneIn: "Ungefär 1 av",
-    noData: "Inte tillräckligt med historik för statistik. Laga mer mat!",
-    beef: "Nötkött",
-    pork: "Fläsk",
-    poultry: "Fågel",
-    fish: "Fisk",
-    vegetarian: "Vegetariskt"
-  }
-};
-
-export const StatsView: React.FC<StatsViewProps> = ({ plan, recipes, language }) => {
-    const t = TRANSLATIONS[language];
+export const StatsView: React.FC<StatsViewProps> = ({ plan, recipes, t, language }) => {
 
     // Filter plan to only include history (up to today)
     const historyPlan = useMemo(() => {
@@ -91,11 +52,6 @@ export const StatsView: React.FC<StatsViewProps> = ({ plan, recipes, language })
                 bestRatedRecipe = recipes.find(r => r.id === id);
             }
         });
-
-        // Fallback to static recipe rating if no user reviews yet, but strictly within history context?
-        // If we want purely "Stats based on history", maybe we shouldn't fallback to metadata if it wasn't rated in history.
-        // However, keeping fallback for UI population if user rated it previously but not in this specific date range logic is tricky.
-        // Let's stick to calculated ratings from historyPlan. If none, look at recipe.rating BUT only if that recipe appears in historyPlan.
         
         if (!bestRatedRecipe && historyPlan.length > 0) {
              // Find the highest rated recipe that actually appears in the history
@@ -192,8 +148,8 @@ export const StatsView: React.FC<StatsViewProps> = ({ plan, recipes, language })
     return (
         <div className="pb-24 space-y-4 px-1">
              <div className="mb-2">
-                <h1 className="text-xl font-bold text-nordic-text">{t.title}</h1>
-                <p className="text-nordic-muted text-xs">{t.subtitle}</p>
+                <h1 className="text-xl font-bold text-nordic-text">{t.stats_title}</h1>
+                <p className="text-nordic-muted text-xs">{t.stats_subtitle}</p>
                 <p className="text-[10px] text-gray-400 mt-1 uppercase tracking-wider font-bold">Based on {totalMeals} past meals</p>
             </div>
 
