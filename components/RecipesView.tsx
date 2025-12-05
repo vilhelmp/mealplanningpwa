@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Recipe, Language, MealPlanItem } from '../types';
-import { Card, Button, Icons, Modal } from './Shared';
+import { Card, Button, Icons, Modal, Input } from './Shared';
 import { parseRecipeWithAI, summarizeFeedback, suggestNewDishes } from '../services/geminiService';
 
 interface RecipesViewProps {
@@ -14,6 +14,17 @@ interface RecipesViewProps {
   t: any;
   language: string;
 }
+
+interface FilterState {
+    cuisines: string[];
+    ingredientSearch: string;
+    onlySpicy: boolean;
+    minRating: number;
+    dietary: string[];
+}
+
+const SPICY_KEYWORDS = ['chili', 'chilli', 'jalapeno', 'jalapeño', 'habanero', 'cayenne', 'sriracha', 'sambal', 'tabasco', 'hot sauce', 'spicy', 'curry', 'masala', 'piri piri', 'harissa'];
+const FISH_KEYWORDS = ['salmon', 'tuna', 'cod', 'fish', 'shrimp', 'prawn', 'crab', 'lobster', 'seafood', 'trout', 'haddock', 'scallop', 'mussel', 'clam', 'anchovy', 'sardine'];
 
 export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], onAddRecipe, onSelectRecipe, onDeleteRecipe, t, language }) => {
   // --- Import State ---
@@ -34,6 +45,16 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   
+  // --- Filter State ---
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState<FilterState>({
+      cuisines: [],
+      ingredientSearch: '',
+      onlySpicy: false,
+      minRating: 0,
+      dietary: []
+  });
+
   // --- Long Press Logic ---
   const timerRef = useRef<any>(null);
   const isLongPress = useRef(false);
@@ -55,6 +76,113 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
 
       return { average, count, comments };
   };
+  
+  // Helper to determine spiciness
+  const isRecipeSpicy = (r: Recipe) => {
+      const text = (r.title + ' ' + r.description + ' ' + r.ingredients.map(i=>i.item_name).join(' ')).toLowerCase();
+      return SPICY_KEYWORDS.some(k => text.includes(k));
+  }
+
+  // Helper to determine dietary type
+  const getDietaryType = (r: Recipe): string => {
+      const meatIngredients = r.ingredients.filter(i => 
+          ['Meat', 'Fish', 'Poultry', 'Seafood'].includes(i.category)
+      );
+
+      if (meatIngredients.length === 0) return 'Vegetarian';
+
+      const names = meatIngredients.map(i => i.item_name.toLowerCase()).join(' ');
+      if (FISH_KEYWORDS.some(k => names.includes(k))) return 'Fish';
+      
+      return 'Meat';
+  }
+
+  // Derive unique cuisines for filter
+  const allCuisines = useMemo(() => {
+      const set = new Set<string>();
+      recipes.forEach(r => {
+          if (r.cuisine) set.add(r.cuisine);
+      });
+      return Array.from(set).sort();
+  }, [recipes]);
+
+  // Derived filtered list
+  const filteredRecipes = useMemo(() => {
+      return recipes.filter(r => {
+          // Cuisine Filter
+          if (filters.cuisines.length > 0 && (!r.cuisine || !filters.cuisines.includes(r.cuisine))) {
+              return false;
+          }
+          
+          // Ingredient Filter
+          if (filters.ingredientSearch.trim()) {
+              const search = filters.ingredientSearch.toLowerCase();
+              const hasIng = r.ingredients.some(i => i.item_name.toLowerCase().includes(search));
+              if (!hasIng) return false;
+          }
+          
+          // Spiciness Filter
+          if (filters.onlySpicy) {
+              if (!isRecipeSpicy(r)) return false;
+          }
+
+          // Rating Filter
+          if (filters.minRating > 0) {
+              const stats = getRecipeStats(r.id);
+              // Use user rating if available, else base rating
+              const rating = stats.count > 0 ? stats.average : (r.rating || 0);
+              if (rating < filters.minRating) return false;
+          }
+
+          // Dietary Filter
+          if (filters.dietary.length > 0) {
+             const type = getDietaryType(r);
+             if (!filters.dietary.includes(type)) return false;
+          }
+
+          return true;
+      });
+  }, [recipes, filters, plan]);
+
+  const activeFilterCount = useMemo(() => {
+      let count = 0;
+      if (filters.cuisines.length > 0) count++;
+      if (filters.ingredientSearch) count++;
+      if (filters.onlySpicy) count++;
+      if (filters.minRating > 0) count++;
+      if (filters.dietary.length > 0) count++;
+      return count;
+  }, [filters]);
+
+  const clearFilters = () => {
+      setFilters({
+          cuisines: [],
+          ingredientSearch: '',
+          onlySpicy: false,
+          minRating: 0,
+          dietary: []
+      });
+  };
+
+  const toggleCuisineFilter = (c: string) => {
+      setFilters(prev => {
+          if (prev.cuisines.includes(c)) {
+              return { ...prev, cuisines: prev.cuisines.filter(x => x !== c) };
+          } else {
+              return { ...prev, cuisines: [...prev.cuisines, c] };
+          }
+      });
+  };
+
+  const toggleDietaryFilter = (d: string) => {
+      setFilters(prev => {
+          if (prev.dietary.includes(d)) {
+              return { ...prev, dietary: prev.dietary.filter(x => x !== d) };
+          } else {
+              return { ...prev, dietary: [...prev.dietary, d] };
+          }
+      });
+  };
 
   // Effect to generate summary when feedback modal opens
   useEffect(() => {
@@ -70,7 +198,7 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
               setFeedbackSummary('');
           }
       }
-  }, [feedbackRecipe, plan]); // Add plan dependency so it updates if plan changes
+  }, [feedbackRecipe, plan]);
 
   const handlePointerDown = (recipe: Recipe) => {
       isLongPress.current = false;
@@ -93,19 +221,15 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
     if (!file) return;
 
     if (file.type === 'text/plain') {
-        // Read text file directly into textarea
         const text = await file.text();
         setImportText(text);
-        // Clear file input so same file can be selected again if needed
         e.target.value = '';
         return;
     }
 
-    // Handle PDF or Images
     const reader = new FileReader();
     reader.onload = (event) => {
         const result = event.target?.result as string;
-        // Result is data:mime;base64,data...
         const base64Data = result.split(',')[1];
         setImportFile({
             data: base64Data,
@@ -114,7 +238,6 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
         });
     };
     reader.readAsDataURL(file);
-    // Clear input
     e.target.value = '';
   };
 
@@ -150,17 +273,11 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
   const handleSuggestRecipes = async () => {
       setIsSuggesting(true);
       setShowSuggestions(true);
-      setSuggestions([]); // Clear previous
+      setSuggestions([]); 
 
       try {
-          // Identify Favorites:
-          // 1. Calculate stats for all recipes
-          // 2. Filter for those with rating >= 4 OR count >= 3 (arbitrary threshold for "frequent")
-          // 3. Extract titles
-          
           const favorites = recipes.filter(r => {
              const stats = getRecipeStats(r.id);
-             // Also include if the base recipe has a manual rating >= 4 (from import/mock)
              return stats.average >= 4 || (r.rating || 0) >= 4 || stats.count >= 2; 
           }).map(r => r.title);
 
@@ -173,15 +290,22 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
       }
   };
 
-  // --- Main List Render ---
   return (
-    <div className="pb-24 space-y-3">
+    <div className="pb-24 md:pb-4 space-y-3">
       <div className="flex items-center justify-between px-1">
         <div className="flex items-baseline gap-2">
           <h1 className="text-xl font-bold text-nordic-text">{t.recipes_title}</h1>
-          <p className="text-nordic-muted text-xs">{recipes.length} {t.saved}</p>
+          <p className="text-nordic-muted text-xs">{filteredRecipes.length} {t.saved}</p>
         </div>
         <div className="flex gap-2">
+            <Button onClick={() => setShowFilters(true)} variant="secondary" className={`!p-2 h-8 aspect-square relative ${activeFilterCount > 0 ? 'text-nordic-primary border-nordic-primary' : ''}`}>
+                <Icons.Filter className="w-4 h-4" />
+                {activeFilterCount > 0 && (
+                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-nordic-accent rounded-full text-[8px] flex items-center justify-center text-white border border-white">
+                        {activeFilterCount}
+                    </span>
+                )}
+            </Button>
             <Button onClick={handleSuggestRecipes} variant="secondary" className="!p-2 h-8 aspect-square text-nordic-accent">
                 <Icons.Sparkles className="w-4 h-4" />
             </Button>
@@ -191,9 +315,11 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        {recipes.map(recipe => {
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 md:gap-4">
+        {filteredRecipes.map(recipe => {
             const stats = getRecipeStats(recipe.id);
+            const isSpicy = isRecipeSpicy(recipe);
+
             return (
               <Card 
                 key={recipe.id} 
@@ -211,6 +337,13 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
                 <div className="aspect-square w-full relative bg-gray-100">
                    <img src={recipe.images[0]} className="w-full h-full object-cover" loading="lazy" />
                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-60" />
+                   <div className="absolute top-2 right-2 flex flex-col gap-1 items-end">
+                       {isSpicy && (
+                           <span className="text-[10px] bg-red-500/90 text-white px-1.5 py-0.5 rounded font-bold shadow-sm">
+                               🌶️
+                           </span>
+                       )}
+                   </div>
                    <div className="absolute bottom-2 left-2 right-2 text-white">
                      <p className="font-bold text-xs leading-tight line-clamp-2 mb-1">{recipe.title}</p>
                      <div className="flex items-center justify-between">
@@ -228,6 +361,92 @@ export const RecipesView: React.FC<RecipesViewProps> = ({ recipes, plan = [], on
             );
         })}
       </div>
+
+      {/* --- Filters Modal --- */}
+      <Modal isOpen={showFilters} onClose={() => setShowFilters(false)} title={t.filter}>
+           <div className="space-y-6">
+               {/* Dietary Filter (NEW) */}
+               <div>
+                   <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">{t.dietary || 'Dietary'}</h3>
+                   <div className="flex flex-wrap gap-2">
+                       {['Meat', 'Fish', 'Vegetarian'].map(type => (
+                           <button
+                               key={type}
+                               onClick={() => toggleDietaryFilter(type)}
+                               className={`px-3 py-1.5 rounded-full text-xs transition-colors border ${filters.dietary.includes(type) ? 'bg-nordic-primary text-white border-nordic-primary' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+                           >
+                               {type === 'Vegetarian' ? (t.vegetarian || type) : type === 'Fish' ? (t.fish || type) : type}
+                           </button>
+                       ))}
+                   </div>
+               </div>
+
+               {/* Cuisine Filter */}
+               <div>
+                   <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">{t.cuisineFilter}</h3>
+                   <div className="flex flex-wrap gap-2">
+                       {allCuisines.map(c => (
+                           <button
+                               key={c}
+                               onClick={() => toggleCuisineFilter(c)}
+                               className={`px-3 py-1.5 rounded-full text-xs transition-colors border ${filters.cuisines.includes(c) ? 'bg-nordic-primary text-white border-nordic-primary' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+                           >
+                               {c}
+                           </button>
+                       ))}
+                   </div>
+               </div>
+
+               {/* Ingredients Filter */}
+               <div>
+                   <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">{t.ingredientsFilter}</h3>
+                   <Input 
+                        placeholder="e.g. Chicken, Tomato..."
+                        value={filters.ingredientSearch}
+                        onChange={(e: any) => setFilters({...filters, ingredientSearch: e.target.value})}
+                        className="text-sm"
+                   />
+               </div>
+
+               {/* Spiciness & Rating */}
+               <div className="grid grid-cols-2 gap-4">
+                   <div>
+                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">{t.spiciness}</h3>
+                        <label className="flex items-center gap-2 cursor-pointer bg-gray-50 p-2 rounded-xl border border-gray-100">
+                             <input 
+                                 type="checkbox" 
+                                 checked={filters.onlySpicy}
+                                 onChange={(e) => setFilters({...filters, onlySpicy: e.target.checked})}
+                                 className="w-4 h-4 rounded text-nordic-primary focus:ring-nordic-primary"
+                             />
+                             <span className="text-sm font-medium">{t.spicyOnly} 🌶️</span>
+                        </label>
+                   </div>
+                   <div>
+                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">{t.minRating}</h3>
+                        <div className="flex bg-gray-50 p-1.5 rounded-xl border border-gray-100 justify-between">
+                            {[1,2,3,4,5].map(star => (
+                                <button key={star} onClick={() => setFilters({...filters, minRating: star === filters.minRating ? 0 : star})}>
+                                    <Icons.Star 
+                                        className={`w-5 h-5 ${star <= filters.minRating ? 'text-nordic-accent' : 'text-gray-300'}`} 
+                                        fill={star <= filters.minRating} 
+                                    />
+                                </button>
+                            ))}
+                        </div>
+                   </div>
+               </div>
+
+               <div className="flex gap-2 pt-2 border-t border-gray-100">
+                   <Button onClick={() => setShowFilters(false)} className="flex-1">
+                       {t.showResults} ({filteredRecipes.length})
+                   </Button>
+                   <Button variant="secondary" onClick={clearFilters} className="flex-1">
+                       {t.clearAll}
+                   </Button>
+               </div>
+           </div>
+      </Modal>
 
       {/* --- Suggestions Modal --- */}
       <Modal isOpen={showSuggestions} onClose={() => setShowSuggestions(false)} title={t.suggestTitle}>

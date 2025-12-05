@@ -23,6 +23,20 @@
             },
             fontFamily: {
               sans: ['Inter', 'system-ui', 'sans-serif'],
+            },
+            keyframes: {
+              slideInRight: {
+                '0%': { transform: 'translateX(20%)', opacity: '0' },
+                '100%': { transform: 'translateX(0)', opacity: '1' },
+              },
+              slideInLeft: {
+                '0%': { transform: 'translateX(-20%)', opacity: '0' },
+                '100%': { transform: 'translateX(0)', opacity: '1' },
+              }
+            },
+            animation: {
+              'slide-in-right': 'slideInRight 0.3s ease-out forwards',
+              'slide-in-left': 'slideInLeft 0.3s ease-out forwards',
             }
           }
         }
@@ -37,6 +51,10 @@
         -ms-overflow-style: none;
         scrollbar-width: none;
       }
+      /* Ensure safe area for mobile bottom nav */
+      .pb-safe {
+        padding-bottom: env(safe-area-inset-bottom, 20px);
+      }
     </style>
   <script type="importmap">
 {
@@ -50,7 +68,7 @@
 }
 </script>
 </head>
-  <body class="bg-gray-100 text-slate-900 select-none">
+  <body class="bg-gray-100 text-slate-900 select-none overflow-x-hidden">
     <div id="root"></div>
   </body>
 </html>

@@ -78,33 +78,49 @@ export const StatsView: React.FC<StatsViewProps> = ({ plan, recipes, t, language
         // 4. Protein Breakdown (Dietary)
         let beef = 0, pork = 0, poultry = 0, fish = 0, veg = 0;
         
+        // 5. Carbohydrate Breakdown
+        let pasta = 0, rice = 0, potato = 0, bread = 0, otherCarb = 0;
+        
         historyPlan.forEach(item => {
             const recipe = recipes.find(r => r.id === item.recipe_id);
             if (!recipe) return;
 
+            // Protein Logic
             const meatIngredients = recipe.ingredients.filter(i => 
                 ['Meat', 'Fish', 'Poultry', 'Seafood'].includes(i.category)
             );
 
             if (meatIngredients.length === 0) {
                 veg++;
-                return;
+            } else {
+                const names = meatIngredients.map(i => i.item_name.toLowerCase()).join(' ');
+                
+                let isFish = ['salmon', 'tuna', 'cod', 'fish', 'shrimp', 'prawn', 'crab', 'lobster', 'seafood'].some(k => names.includes(k));
+                let isPoultry = ['chicken', 'turkey', 'duck', 'goose', 'hen', 'poultry'].some(k => names.includes(k));
+                let isBeef = ['beef', 'steak', 'mince', 'burger', 'meatball', 'veal', 'ox'].some(k => names.includes(k));
+                let isPork = ['pork', 'bacon', 'ham', 'sausage', 'chorizo'].some(k => names.includes(k));
+                
+                let matched = false;
+                if (isFish) { fish++; matched = true; }
+                else if (isPoultry) { poultry++; matched = true; }
+                else if (isBeef) { beef++; matched = true; }
+                else if (isPork) { pork++; matched = true; }
+                
+                if (!matched) beef++; // Default
             }
 
-            const names = meatIngredients.map(i => i.item_name.toLowerCase()).join(' ');
-            
-            let isFish = ['salmon', 'tuna', 'cod', 'fish', 'shrimp', 'prawn', 'crab', 'lobster', 'seafood'].some(k => names.includes(k));
-            let isPoultry = ['chicken', 'turkey', 'duck', 'goose', 'hen', 'poultry'].some(k => names.includes(k));
-            let isBeef = ['beef', 'steak', 'mince', 'burger', 'meatball', 'veal', 'ox'].some(k => names.includes(k));
-            let isPork = ['pork', 'bacon', 'ham', 'sausage', 'chorizo'].some(k => names.includes(k));
-            
-            let matched = false;
-            if (isFish) { fish++; matched = true; }
-            if (isPoultry) { poultry++; matched = true; }
-            if (isBeef) { beef++; matched = true; }
-            if (isPork) { pork++; matched = true; }
-            
-            if (!matched) beef++; // Default
+            // Carb Logic
+            const allIngredientNames = recipe.ingredients.map(i => i.item_name.toLowerCase()).join(' ');
+            const isPasta = ['pasta', 'spaghetti', 'macaroni', 'noodle', 'lasagne', 'penne', 'fusilli', 'tagliatelle', 'linguine', 'ravioli'].some(k => allIngredientNames.includes(k));
+            const isRice = ['rice', 'risotto', 'arborio', 'basmati', 'jasmine'].some(k => allIngredientNames.includes(k));
+            const isPotato = ['potato', 'fries', 'mash', 'gnocchi', 'hash brown', 'wedges', 'potatis'].some(k => allIngredientNames.includes(k));
+            const isBread = ['bread', 'toast', 'bun', 'baguette', 'tortilla', 'wrap', 'pita', 'bagel', 'crouton', 'sandwich'].some(k => allIngredientNames.includes(k));
+
+            if (isPasta) pasta++;
+            else if (isRice) rice++;
+            else if (isPotato) potato++;
+            else if (isBread) bread++;
+            else otherCarb++;
         });
 
         const totalMeals = historyPlan.length;
@@ -121,6 +137,7 @@ export const StatsView: React.FC<StatsViewProps> = ({ plan, recipes, t, language
             topCuisine,
             topCuisineCount,
             counts: { beef, pork, poultry, fish, veg },
+            carbCounts: { pasta, rice, potato, bread, other: otherCarb },
             totalMeals,
             vegText
         };
@@ -128,7 +145,7 @@ export const StatsView: React.FC<StatsViewProps> = ({ plan, recipes, t, language
 
     if (!stats) return <div className="p-10 text-center text-gray-400 text-sm">{t.noData}</div>;
 
-    const { counts, totalMeals } = stats;
+    const { counts, carbCounts, totalMeals } = stats;
 
     const Bar = ({ label, value, colorClass }: any) => (
         <div className="mb-3">
@@ -146,15 +163,15 @@ export const StatsView: React.FC<StatsViewProps> = ({ plan, recipes, t, language
     );
 
     return (
-        <div className="pb-24 space-y-4 px-1">
-             <div className="mb-2">
+        <div className="pb-24 md:pb-4 space-y-4 px-1 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4">
+             <div className="mb-2 md:col-span-2 lg:col-span-3">
                 <h1 className="text-xl font-bold text-nordic-text">{t.stats_title}</h1>
                 <p className="text-nordic-muted text-xs">{t.stats_subtitle}</p>
                 <p className="text-[10px] text-gray-400 mt-1 uppercase tracking-wider font-bold">Based on {totalMeals} past meals</p>
             </div>
 
             {/* Highlights Grid */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 md:col-span-2 lg:col-span-3 xl:col-span-1">
                 <Card className="p-3 bg-gradient-to-br from-teal-50 to-white border-teal-100">
                     <h3 className="text-[10px] uppercase font-bold text-teal-800 tracking-wide mb-2 flex items-center gap-1">
                         <Icons.Star className="w-3 h-3" /> {t.bestRated}
@@ -212,7 +229,7 @@ export const StatsView: React.FC<StatsViewProps> = ({ plan, recipes, t, language
                 </div>
             </Card>
 
-            {/* Breakdown Chart */}
+            {/* Protein Breakdown Chart */}
             <Card className="p-4">
                 <h3 className="text-xs font-bold text-nordic-text mb-4">{t.meatCons}</h3>
                 <Bar label={t.beef} value={counts.beef} colorClass="bg-red-400" />
@@ -220,6 +237,16 @@ export const StatsView: React.FC<StatsViewProps> = ({ plan, recipes, t, language
                 <Bar label={t.poultry} value={counts.poultry} colorClass="bg-yellow-400" />
                 <Bar label={t.fish} value={counts.fish} colorClass="bg-blue-400" />
                 <Bar label={t.vegetarian} value={counts.veg} colorClass="bg-green-400" />
+            </Card>
+
+            {/* Carb Sources Chart */}
+            <Card className="p-4">
+                <h3 className="text-xs font-bold text-nordic-text mb-4">{t.carbSources}</h3>
+                <Bar label={t.pasta} value={carbCounts.pasta} colorClass="bg-yellow-300" />
+                <Bar label={t.rice} value={carbCounts.rice} colorClass="bg-stone-200" />
+                <Bar label={t.potato} value={carbCounts.potato} colorClass="bg-amber-300" />
+                <Bar label={t.bread} value={carbCounts.bread} colorClass="bg-orange-300" />
+                <Bar label={t.other} value={carbCounts.other} colorClass="bg-teal-200" />
             </Card>
         </div>
     );

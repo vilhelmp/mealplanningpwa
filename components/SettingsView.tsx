@@ -357,7 +357,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
               // Check cache
               if (item.translations && item.translations[targetLang]) {
                   const cached = item.translations[targetLang];
-                  listUpdates.push({ ...item, item_name: cached.item_name, unit: cached.unit, lang: targetLang });
+                  // Save current content to translations map before swapping
+                  const oldLang = item.lang || 'en';
+                  
+                  listUpdates.push({ 
+                      ...item, 
+                      item_name: cached.item_name, 
+                      unit: cached.unit, 
+                      lang: targetLang,
+                      translations: {
+                          ...item.translations,
+                          [oldLang]: { item_name: item.item_name, unit: item.unit }
+                      }
+                  });
                   continue;
               }
               
@@ -366,8 +378,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
               // For now, let's assume we just want to leverage the bulk translate function if list is small.
           }
           
-          // Identify items needing AI
-          const itemsNeedingAI = currentList.filter(i => i.lang !== targetLang && !(i.translations && i.translations[targetLang]));
+          // Identify items needing AI (not in listUpdates yet)
+          const itemsNeedingAI = currentList.filter(i => {
+              // Not current language AND not already queued for update via cache
+              return i.lang !== targetLang && !listUpdates.some(u => u.id === i.id);
+          });
           
           if (itemsNeedingAI.length > 0) {
               const translatedItems = await translateShoppingItems(itemsNeedingAI, targetLang);
@@ -389,7 +404,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
               }
           }
           
-          // Merge cached updates
+          // Merge updates into final list
           const finalShoppingList = currentList.map(item => {
               const update = listUpdates.find(u => u.id === item.id);
               return update || item;
@@ -516,6 +531,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
           </Button>
         </div>
 
+        {/* Week Start Day */}
+        <div className="p-3 flex items-center justify-between">
+           <div>
+              <h3 className="font-medium text-sm">{t.weekStart}</h3>
+           </div>
+           <div className="flex bg-gray-100 p-1 rounded-lg">
+               {[1, 6, 0].map(day => (
+                   <button 
+                       key={day}
+                       onClick={() => onUpdate({...settings, week_start_day: day})}
+                       className={`px-3 py-1 text-xs rounded-md transition-all ${settings.week_start_day === day ? 'bg-white shadow-sm font-medium text-nordic-primary' : 'text-gray-500'}`}
+                   >
+                       {day === 1 ? t.monday : day === 6 ? t.saturday : t.sunday}
+                   </button>
+               ))}
+           </div>
+        </div>
+
         {/* Translation Section */}
         <div className="p-3">
             <h3 className="font-medium text-sm">{t.translateTitle}</h3>
@@ -576,7 +609,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
             </div>
         </div>
 
-        {/* Other Sections Omitted for Brevity (unchanged from previous output) */}
         {/* Ingredients Database Section */}
         <div className="p-3">
             <h3 className="font-medium text-sm">{t.ingredientsDb}</h3>
@@ -678,7 +710,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
         </div>
       </Card>
       
-      {/* Export & Data Management sections (unchanged) */}
+      {/* Export & Data Management sections */}
       <Card className="rounded-xl p-3 bg-indigo-50/50 border-indigo-100">
           <h3 className="font-bold text-sm text-indigo-900 mb-2">{t.exportData}</h3>
           <p className="text-[10px] text-indigo-700/70 mb-3">{t.exportDesc}</p>
@@ -821,7 +853,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ settings, onUpdate, 
                </div>
 
                <div className="flex gap-2 pt-2">
-                   <Button onClick={saveStoreLayout} className="flex-1">{t.save}</Button>
+                   <Button onClick={saveStoreLayout} className="flex-1">{t.saveLayout}</Button>
                </div>
            </div>
       </Modal>

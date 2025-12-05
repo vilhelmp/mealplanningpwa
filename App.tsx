@@ -1,613 +1,678 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ViewState, Recipe, MealPlanItem, ShoppingItem, AppSettings, Language, MealType } from './types';
-import { INITIAL_SETTINGS, generateInitialPlan, mergeShoppingList } from './services/mockData';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { ViewState, Recipe, MealPlanItem, ShoppingItem, AppSettings, Language, MealType, SHOPPING_CATEGORIES } from './types';
 import { storage } from './services/storage';
-import { Icons } from './components/Shared';
+import { INITIAL_SETTINGS, mergeShoppingList } from './services/mockData';
 import { BASE_TRANSLATIONS } from './services/translations';
-
-// Views
 import { PlanView } from './components/PlanView';
 import { ShopView } from './components/ShopView';
 import { RecipesView } from './components/RecipesView';
-import { SettingsView } from './components/SettingsView';
 import { StatsView } from './components/StatsView';
+import { SettingsView } from './components/SettingsView';
 import { RecipeDetail } from './components/RecipeDetail';
+import { Icons } from './components/Shared';
+
+// Order of tabs for swipe navigation
+const TABS: ViewState[] = ['plan', 'shop', 'recipes', 'stats', 'settings'];
 
 const App = () => {
-  const [isLoaded, setIsLoaded] = useState(false);
-  const [view, setView] = useState<ViewState>('plan');
+  const [activeView, setActiveView] = useState<ViewState>('plan');
+  const [slideDir, setSlideDir] = useState<'right' | 'left'>('right');
+  const [loading, setLoading] = useState(true);
   
   // Data State
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [plan, setPlan] = useState<MealPlanItem[]>([]);
-  const [shoppingList, setShoppingList] = useState<ShoppingItem[]>([]);
+  const [shoppingItems, setShoppingItems] = useState<ShoppingItem[]>([]);
   const [settings, setSettings] = useState<AppSettings>(INITIAL_SETTINGS);
-  
-  // History state for undo (Only tracks Plan for now)
-  const [planHistory, setPlanHistory] = useState<MealPlanItem[][]>([]);
-  
-  // Context for Modal
-  const [selectedContext, setSelectedContext] = useState<{ recipe: Recipe, meal?: MealPlanItem } | null>(null);
 
-  // --- Persistence Helper ---
-  
-  const refreshData = useCallback(async () => {
+  // UI State
+  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
+  const [selectedMealForDetail, setSelectedMealForDetail] = useState<MealPlanItem | undefined>(undefined);
+
+  // Undo History for Plan
+  const [planHistory, setPlanHistory] = useState<MealPlanItem[][]>([]);
+
+  // Swipe State
+  const touchStartX = useRef<number | null>(null);
+  const touchEndX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+  const touchEndY = useRef<number | null>(null);
+  const minSwipeDistance = 50;
+
+  // Load Data
+  useEffect(() => {
+    const load = async () => {
+      await storage.init();
       const [r, p, s, cfg] = await Promise.all([
-          storage.getRecipes(),
-          storage.getPlan(),
-          storage.getShoppingList(),
-          storage.getSettings()
+        storage.getRecipes(),
+        storage.getPlan(),
+        storage.getShoppingList(),
+        storage.getSettings()
       ]);
       setRecipes(r);
       setPlan(p);
-      setShoppingList(s);
+      setShoppingItems(s);
       setSettings(cfg);
+      setLoading(false);
+    };
+    load();
   }, []);
 
-  // Initial Load
-  useEffect(() => {
-    const init = async () => {
-        await storage.init(); // Seeds DB if empty
-        await refreshData();
-        setIsLoaded(true);
-    };
-    init();
-  }, [refreshData]);
-
-  // --- Translation Loading ---
+  // --- Translation Helper ---
   const t = useMemo(() => {
-      // 1. Try built-in
-      if (BASE_TRANSLATIONS[settings.language]) {
-          return BASE_TRANSLATIONS[settings.language];
-      }
-      // 2. Try custom loaded
-      if (settings.custom_languages && settings.custom_languages[settings.language]) {
-          return settings.custom_languages[settings.language];
-      }
-      // 3. Fallback to English
-      return BASE_TRANSLATIONS[Language.EN];
+    // 1. Check custom languages
+    if (settings.custom_languages && settings.custom_languages[settings.language]) {
+        return settings.custom_languages[settings.language];
+    }
+    // 2. Check built-in
+    if (BASE_TRANSLATIONS[settings.language as Language]) {
+        return BASE_TRANSLATIONS[settings.language as Language];
+    }
+    // 3. Fallback
+    return BASE_TRANSLATIONS[Language.EN];
   }, [settings.language, settings.custom_languages]);
 
-  // --- Logic Helpers ---
-
-  const syncShoppingList = async (currentPlan: MealPlanItem[], currentRecipes: Recipe[], currentSettings: AppSettings) => {
-      // Get latest list to merge against (to keep manual items)
-      const currentList = await storage.getShoppingList();
-      
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const futurePlan = currentPlan.filter(p => {
-          const d = new Date(p.date);
-          // Include today
-          return d >= today;
-      });
-
-      const newList = mergeShoppingList(currentList, futurePlan, currentRecipes, currentSettings.pantry_staples);
-      await storage.saveShoppingList(newList);
-      setShoppingList(newList);
-  };
-
-  const savePlanHistory = () => {
-      const snapshot = JSON.parse(JSON.stringify(plan));
-      setPlanHistory(prev => {
-          const newHistory = [...prev, snapshot];
-          return newHistory.length > 50 ? newHistory.slice(newHistory.length - 50) : newHistory;
-      });
-  };
-
-  // --- Handlers ---
-
-  const handleUndo = async () => {
-    if (planHistory.length === 0) return;
-    const previousPlan = planHistory[planHistory.length - 1];
-    setPlanHistory(prev => prev.slice(0, -1));
-    
-    // Restore DB and State
-    await storage.clearPlan();
-    for (const item of previousPlan) await storage.savePlanItem(item);
-    
-    setPlan(previousPlan);
-    await syncShoppingList(previousPlan, recipes, settings);
-  };
-
-  const handleUpdateSettings = async (newSettings: AppSettings) => {
-      await storage.saveSettings(newSettings);
-      setSettings(newSettings);
-      await syncShoppingList(plan, recipes, newSettings);
-  };
-
-  // --- Recipe Actions ---
-
-  const handleAddRecipe = async (newRecipeData: Omit<Recipe, 'id' | 'images' | 'version'>) => {
-    const newRecipe: Recipe = {
-      ...newRecipeData,
-      id: Date.now(),
-      version: 1,
-      history: [],
-      lang: settings.language, // Set initial language
-      translations: {},
-      images: [`https://picsum.photos/400/300?random=${Date.now()}`] // Mock image fallback
-    };
-    await storage.saveRecipe(newRecipe);
-    setRecipes(prev => [newRecipe, ...prev]);
-  };
-
-  const handleUpdateRecipe = async (updatedRecipe: Recipe) => {
-    // Check if substantial content changed (instructions or ingredients)
-    const existing = recipes.find(r => r.id === updatedRecipe.id);
-    let recipeToSave = updatedRecipe;
-
-    if (existing) {
-        const contentChanged = 
-            JSON.stringify(existing.ingredients) !== JSON.stringify(updatedRecipe.ingredients) ||
-            JSON.stringify(existing.instructions) !== JSON.stringify(updatedRecipe.instructions) ||
-            existing.title !== updatedRecipe.title ||
-            existing.description !== updatedRecipe.description;
-        
-        if (contentChanged) {
-            // Snapshot current state to history
-            const snapshot = {
-                ...existing,
-                history: [] // Don't nest history indefinitely
-            };
-            
-            recipeToSave = {
-                ...updatedRecipe,
-                version: (existing.version || 1) + 1,
-                history: [snapshot, ...(existing.history || [])],
-                // CRITICAL: Clear translation cache for other languages since content changed
-                translations: {} 
-            };
-        }
-    }
-
-    await storage.saveRecipe(recipeToSave);
-    const newRecipes = recipes.map(r => r.id === recipeToSave.id ? recipeToSave : r);
-    setRecipes(newRecipes);
-    
-    // Update context if open
-    if (selectedContext && selectedContext.recipe.id === recipeToSave.id) {
-        setSelectedContext({ ...selectedContext, recipe: recipeToSave });
-    }
-    
-    await syncShoppingList(plan, newRecipes, settings);
-  };
-
-  const handleBulkUpdateRecipes = async (updatedRecipes: Recipe[]) => {
-      // 1. Save to DB
-      for (const r of updatedRecipes) {
-          await storage.saveRecipe(r);
-      }
-
-      // 2. Update State
-      const newRecipesFull = recipes.map(r => {
-          const updated = updatedRecipes.find(u => u.id === r.id);
-          return updated || r;
-      });
-      
-      setRecipes(newRecipesFull);
-
-      // 3. Sync Shopping List
-      await syncShoppingList(plan, newRecipesFull, settings);
-  };
-
-  const handleDeleteRecipe = async (recipeId: number) => {
-    await storage.deleteRecipe(recipeId);
-    
-    // Update Local State
-    const newRecipes = recipes.filter(r => r.id !== recipeId);
-    setRecipes(newRecipes);
-    
-    // Remove meals from plan
-    const newPlan = plan.filter(p => p.recipe_id !== recipeId);
-    // Sync Plan changes to DB
-    const removedItems = plan.filter(p => p.recipe_id === recipeId);
-    for (const item of removedItems) await storage.deletePlanItem(item.id);
-    
-    setPlan(newPlan);
-    await syncShoppingList(newPlan, newRecipes, settings);
+  // --- Navigation Helper ---
+  const changeView = (newView: ViewState) => {
+      if (newView === activeView) return;
+      const currentIndex = TABS.indexOf(activeView);
+      const newIndex = TABS.indexOf(newView);
+      setSlideDir(newIndex > currentIndex ? 'right' : 'left');
+      setActiveView(newView);
   };
 
   // --- Plan Actions ---
 
-  const handleRegeneratePlan = async () => {
-      savePlanHistory();
-      
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      const historyItems = plan.filter(p => {
-          const d = new Date(p.date);
-          d.setHours(0, 0, 0, 0);
-          return d < today;
-      });
-      
-      const futureItemsToRemove = plan.filter(p => {
-          const d = new Date(p.date);
-          d.setHours(0, 0, 0, 0);
-          return d >= today;
-      });
-
-      for (const item of futureItemsToRemove) {
-          await storage.deletePlanItem(item.id);
-      }
-
-      const newFutureItems = generateInitialPlan([...recipes].reverse()); 
-      
-      for (const p of newFutureItems) {
-          await storage.savePlanItem(p);
-      }
-      
-      const combinedPlan = [...historyItems, ...newFutureItems];
-      setPlan(combinedPlan);
-      await syncShoppingList(combinedPlan, recipes, settings);
+  const savePlanToHistory = () => {
+      setPlanHistory(prev => [...prev.slice(-9), [...plan]]); // Keep last 10
   };
 
-  const handleRateMeal = async (id: number, rating: number, comment?: string) => {
-      const item = plan.find(p => p.id === id);
-      if (item) {
-          const updated = { ...item, rating, rating_comment: comment, is_cooked: true };
-          await storage.savePlanItem(updated);
-          
-          setPlan(prev => prev.map(p => p.id === id ? updated : p));
-          if (selectedContext?.meal?.id === id) {
-              setSelectedContext({ ...selectedContext, meal: updated });
-          }
-      }
+  const handleUndoPlan = () => {
+      if (planHistory.length === 0) return;
+      const previous = planHistory[planHistory.length - 1];
+      const newHistory = planHistory.slice(0, -1);
+      setPlanHistory(newHistory);
+      setPlan(previous);
+      storage.clearPlan().then(() => {
+          previous.forEach(p => storage.savePlanItem(p));
+      });
   };
 
   const handleAddMeal = async (date: string, recipeId: number) => {
-      savePlanHistory();
+      savePlanToHistory();
       const recipe = recipes.find(r => r.id === recipeId);
-      
-      const existing = plan.find(p => p.date === date);
-      if (existing) {
-          await storage.deletePlanItem(existing.id);
-      }
+      if (!recipe) return;
 
-      const newMeal: MealPlanItem = {
+      const newItem: MealPlanItem = {
           id: Date.now(),
-          date: date,
-          type: MealType.DINNER,
+          date,
           recipe_id: recipeId,
-          recipe_version: recipe ? (recipe.version || 1) : 1, // Store current version
-          is_leftover: false,
+          recipe_version: recipe.version,
+          type: MealType.DINNER,
           is_cooked: false,
-          servings: recipe ? recipe.servings_default : 4
+          is_leftover: false,
+          servings: recipe.servings_default
       };
 
-      await storage.savePlanItem(newMeal);
-      
-      const newPlan = [...plan.filter(p => p.date !== date), newMeal];
+      const newPlan = [...plan, newItem];
       setPlan(newPlan);
-      await syncShoppingList(newPlan, recipes, settings);
+      await storage.savePlanItem(newItem);
+  };
+
+  const handleGeneratePlan = async (startDateStr: string) => {
+      savePlanToHistory();
       
-      setView('plan');
-  };
+      const newPlan = [...plan];
+      const start = new Date(startDateStr);
 
-  const handleRemoveMeal = async (date: string) => {
-      savePlanHistory();
-      const item = plan.find(p => p.date === date);
-      if (item) {
-          await storage.deletePlanItem(item.id);
-          const newPlan = plan.filter(p => p.date !== date);
-          setPlan(newPlan);
-          await syncShoppingList(newPlan, recipes, settings);
-      }
-  };
+      // Determine today's date string (local) to avoid generating for past days
+      const now = new Date();
+      const todayYear = now.getFullYear();
+      const todayMonth = String(now.getMonth() + 1).padStart(2, '0');
+      const todayDay = String(now.getDate()).padStart(2, '0');
+      const todayStr = `${todayYear}-${todayMonth}-${todayDay}`;
+      
+      // Try to fill 7 days from start date
+      for (let i = 0; i < 7; i++) {
+          const d = new Date(start);
+          d.setDate(d.getDate() + i);
+          const dateStr = d.toISOString().split('T')[0];
+          
+          // Skip if date is in the past
+          if (dateStr < todayStr) continue;
 
-  const handleUpdateServings = async (mealId: number, newServings: number) => {
-      savePlanHistory();
-      const item = plan.find(p => p.id === mealId);
-      if (item) {
-          const updated = { ...item, servings: newServings };
-          await storage.savePlanItem(updated);
+          // Skip if already has meal
+          if (newPlan.some(p => p.date === dateStr)) continue;
           
-          const newPlan = plan.map(p => p.id === mealId ? updated : p);
-          setPlan(newPlan);
-          
-          if (selectedContext?.meal?.id === mealId) {
-             setSelectedContext({ ...selectedContext, meal: updated });
+          // Smart Recommendation Logic
+          if (recipes.length > 0) {
+              const scoredRecipes = recipes.map(recipe => {
+                  // 1. Rating Score
+                  const history = newPlan.filter(p => p.recipe_id === recipe.id && p.rating);
+                  const avgRating = history.length > 0 
+                      ? history.reduce((acc, curr) => acc + (curr.rating || 0), 0) / history.length
+                      : (recipe.rating || 3.5); // Default neutral/good
+
+                  // 2. Recency Score
+                  const eatenDates = newPlan
+                      .filter(p => p.recipe_id === recipe.id && p.date < dateStr)
+                      .map(p => p.date)
+                      .sort()
+                      .reverse();
+                  
+                  const lastEatenDate = eatenDates[0];
+                  let daysSince = 100; // Default high if never eaten
+                  
+                  if (lastEatenDate) {
+                      const targetTime = new Date(dateStr).getTime();
+                      const lastTime = new Date(lastEatenDate).getTime();
+                      // Diff in days
+                      daysSince = Math.round((targetTime - lastTime) / (1000 * 60 * 60 * 24));
+                  }
+
+                  // --- Scoring Algorithm ---
+                  // Base: Rating (0-50 points) + DaysSince (capped at 30, x2 = 60 points)
+                  let score = (avgRating * 10) + (Math.min(daysSince, 30) * 2);
+
+                  // Penalties for recent meals (Graduated)
+                  if (daysSince <= 1) {
+                      score -= 10000; // Impossible to pick unless it's the only option
+                  } else if (daysSince <= 2) {
+                      score -= 5000; // Very strongly avoid
+                  } else if (daysSince <= 5) {
+                      score -= 2000; // Avoid if possible
+                  } else if (daysSince <= 7) {
+                      score -= 500;  // Slight preference for variety > 1 week
+                  }
+
+                  // Random Jitter (0-10) to mix up similar candidates
+                  score += Math.random() * 10;
+
+                  return { id: recipe.id, score, daysSince };
+              });
+
+              // Sort by highest score
+              scoredRecipes.sort((a, b) => b.score - a.score);
+              
+              const bestMatch = scoredRecipes[0];
+              
+              // Select the best match. 
+              // We do NOT use a random fallback here because the scoring logic above
+              // already handles "bad" options by penalizing them but keeping them in relative order.
+              // E.g. A meal eaten 5 days ago will have a higher score than one eaten 1 day ago.
+              const selectedRecipe = recipes.find(r => r.id === bestMatch.id);
+
+              if (selectedRecipe) {
+                  const newItem: MealPlanItem = {
+                      id: Date.now() + i,
+                      date: dateStr,
+                      recipe_id: selectedRecipe.id,
+                      recipe_version: selectedRecipe.version,
+                      type: MealType.DINNER,
+                      is_cooked: false,
+                      is_leftover: false,
+                      servings: selectedRecipe.servings_default
+                  };
+                  newPlan.push(newItem);
+                  await storage.savePlanItem(newItem);
+              }
           }
-          await syncShoppingList(newPlan, recipes, settings);
       }
+      setPlan(newPlan);
   };
 
   const handleMoveMeal = async (date: string, direction: 'up' | 'down') => {
-      savePlanHistory();
-      const currentPlan = [...plan];
-      const idx = currentPlan.findIndex(p => p.date === date);
-      if (idx === -1) return;
-      
-      const targetDateObj = new Date(date);
-      targetDateObj.setDate(targetDateObj.getDate() + (direction === 'down' ? 1 : -1));
-      const targetDate = targetDateObj.toISOString().split('T')[0];
-      const targetIdx = currentPlan.findIndex(p => p.date === targetDate);
-      
-      const itemsToUpdate: MealPlanItem[] = [];
+      // "Move" in a calendar usually implies changing date. 
+      // But for 'up/down' in a list, it might mean swapping with prev/next day?
+      // Let's implement swapping with adjacent day.
+      const current = plan.find(p => p.date === date);
+      if (!current) return;
 
-      if (targetIdx > -1) {
-          // Swap
-          const itemA = { ...currentPlan[idx], date: targetDate };
-          const itemB = { ...currentPlan[targetIdx], date: date };
-          currentPlan[idx] = itemA;
-          currentPlan[targetIdx] = itemB;
-          itemsToUpdate.push(itemA, itemB);
-      } else {
-          // Move to empty slot
-          const itemA = { ...currentPlan[idx], date: targetDate };
-          currentPlan[idx] = itemA;
-          itemsToUpdate.push(itemA);
-      }
-      
-      for (const item of itemsToUpdate) await storage.savePlanItem(item);
-      setPlan(currentPlan);
-      await syncShoppingList(currentPlan, recipes, settings);
+      savePlanToHistory();
+
+      const d = new Date(date);
+      d.setDate(d.getDate() + (direction === 'down' ? 1 : -1));
+      const targetDate = d.toISOString().split('T')[0];
+
+      const target = plan.find(p => p.date === targetDate);
+
+      // Perform swap or move
+      const updatedPlan = plan.map(p => {
+          if (p.id === current.id) return { ...p, date: targetDate };
+          if (target && p.id === target.id) return { ...p, date };
+          return p;
+      });
+
+      setPlan(updatedPlan);
+      await storage.savePlanItem({ ...current, date: targetDate });
+      if (target) await storage.savePlanItem({ ...target, date });
   };
 
   const handleReorderMeal = async (mealId: number, targetDate: string) => {
-      savePlanHistory();
-      const currentPlan = [...plan];
-      const draggingIdx = currentPlan.findIndex(p => p.id === mealId);
-      if (draggingIdx === -1) return;
+       const meal = plan.find(p => p.id === mealId);
+       if (!meal || meal.date === targetDate) return;
+       
+       savePlanToHistory();
+       
+       // Check collision
+       const targetMeal = plan.find(p => p.date === targetDate);
+       
+       let updatedPlan = [...plan];
+       
+       if (targetMeal) {
+           // Swap dates
+           updatedPlan = updatedPlan.map(p => {
+               if (p.id === mealId) return { ...p, date: targetDate };
+               if (p.id === targetMeal.id) return { ...p, date: meal.date };
+               return p;
+           });
+           await storage.savePlanItem({ ...meal, date: targetDate });
+           await storage.savePlanItem({ ...targetMeal, date: meal.date });
+       } else {
+           // Just move
+           updatedPlan = updatedPlan.map(p => {
+               if (p.id === mealId) return { ...p, date: targetDate };
+               return p;
+           });
+           await storage.savePlanItem({ ...meal, date: targetDate });
+       }
+       setPlan(updatedPlan);
+  };
+
+  const handleRemoveMeal = async (date: string) => {
+      const meal = plan.find(p => p.date === date);
+      if (!meal) return;
+      savePlanToHistory();
       
-      const targetIdx = currentPlan.findIndex(p => p.date === targetDate);
+      const newPlan = plan.filter(p => p.date !== date);
+      setPlan(newPlan);
+      await storage.deletePlanItem(meal.id);
+  };
+
+  const handleRateMeal = async (id: number, rating: number, comment?: string) => {
+      const updatedPlan = plan.map(p => 
+          p.id === id ? { ...p, is_cooked: true, rating, rating_comment: comment } : p
+      );
+      setPlan(updatedPlan);
+      const item = updatedPlan.find(p => p.id === id);
+      if (item) await storage.savePlanItem(item);
+  };
+  
+  const handleUpdateServings = async (mealId: number, servings: number) => {
+      const updatedPlan = plan.map(p => 
+          p.id === mealId ? { ...p, servings } : p
+      );
+      setPlan(updatedPlan);
+      const item = updatedPlan.find(p => p.id === mealId);
+      if (item) await storage.savePlanItem(item);
+  }
+
+  // --- Recipe Actions ---
+
+  const handleAddRecipe = async (recipeData: Omit<Recipe, 'id' | 'images' | 'version'>) => {
+      const newRecipe: Recipe = {
+          ...recipeData,
+          id: Date.now(),
+          images: [`https://picsum.photos/seed/${Date.now()}/400/300`], // Placeholder if none
+          version: 1,
+          history: []
+      };
+      const newRecipes = [newRecipe, ...recipes];
+      setRecipes(newRecipes);
+      await storage.saveRecipe(newRecipe);
+  };
+
+  const handleUpdateRecipe = async (updated: Recipe) => {
+      // Handle Versioning
+      const original = recipes.find(r => r.id === updated.id);
+      let finalRecipe = updated;
       
-      const itemsToUpdate: MealPlanItem[] = [];
-      const draggingItem = { ...currentPlan[draggingIdx] };
-      const originalDate = draggingItem.date;
-      
-      if (targetIdx > -1) {
-          // Swap
-          const targetItem = { ...currentPlan[targetIdx] };
-          draggingItem.date = targetDate;
-          targetItem.date = originalDate;
+      if (original) {
+          // Check if ingredients or instructions changed to bump version
+          const changed = JSON.stringify(original.ingredients) !== JSON.stringify(updated.ingredients) ||
+                          JSON.stringify(original.instructions) !== JSON.stringify(updated.instructions);
           
-          currentPlan[draggingIdx] = draggingItem;
-          currentPlan[targetIdx] = targetItem;
-          itemsToUpdate.push(draggingItem, targetItem);
+          if (changed) {
+              finalRecipe = {
+                  ...updated,
+                  version: (original.version || 1) + 1,
+                  history: [...(original.history || []), original]
+              };
+          }
+      }
+
+      const newRecipes = recipes.map(r => r.id === updated.id ? finalRecipe : r);
+      setRecipes(newRecipes);
+      await storage.saveRecipe(finalRecipe);
+      
+      // Update selected if open
+      if (selectedRecipe?.id === updated.id) {
+          setSelectedRecipe(finalRecipe);
+      }
+  };
+
+  const handleDeleteRecipe = async (id: number) => {
+      const newRecipes = recipes.filter(r => r.id !== id);
+      setRecipes(newRecipes);
+      await storage.deleteRecipe(id);
+      // Remove from plan? Optional, keeping history might be better
+  };
+
+  const handleUpdateAllRecipes = async (newRecipes: Recipe[]) => {
+      setRecipes(newRecipes);
+      // Batch save
+      for (const r of newRecipes) await storage.saveRecipe(r);
+  };
+
+  // --- Shopping List Actions ---
+
+  const handleToggleItem = async (item: ShoppingItem) => {
+      const existingIndex = shoppingItems.findIndex(i => i.id === item.id);
+      let newItems;
+      let itemToSave;
+
+      if (existingIndex >= 0) {
+          // Item exists in persistence, toggle it
+          const existing = shoppingItems[existingIndex];
+          const updated = { ...existing, checked: !existing.checked };
+          newItems = [...shoppingItems];
+          newItems[existingIndex] = updated;
+          itemToSave = updated;
       } else {
-          // Move
-          draggingItem.date = targetDate;
-          currentPlan[draggingIdx] = draggingItem;
-          itemsToUpdate.push(draggingItem);
+          // Item generated from plan but not yet persisted (because it's new/view-only)
+          // Since user clicked it, we assume they want to toggle it (likely check it)
+          const newItem = { ...item, checked: !item.checked };
+          newItems = [...shoppingItems, newItem];
+          itemToSave = newItem;
       }
 
-      for (const item of itemsToUpdate) await storage.savePlanItem(item);
-      setPlan(currentPlan);
-      await syncShoppingList(currentPlan, recipes, settings);
-  };
-  
-  // --- Stats & Data Actions ---
-  
-  const handleClearStats = async () => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      const itemsToRemove = plan.filter(p => {
-          const d = new Date(p.date);
-          d.setHours(0,0,0,0);
-          return d < today;
-      });
-      
-      for (const item of itemsToRemove) {
-          await storage.deletePlanItem(item.id);
-      }
-      
-      setPlan(prev => prev.filter(p => {
-          const d = new Date(p.date);
-          d.setHours(0,0,0,0);
-          return d >= today;
-      }));
+      setShoppingItems(newItems);
+      await storage.saveShoppingItem(itemToSave);
   };
 
-  const handleClearReviews = async () => {
-      const updates = plan
-          .filter(p => p.rating !== undefined || p.rating_comment !== undefined)
-          .map(p => ({ ...p, rating: undefined, rating_comment: undefined }));
-      
-      for (const item of updates) {
-          await storage.savePlanItem(item);
-      }
-      
-      setPlan(prev => prev.map(p => {
-          const updated = updates.find(u => u.id === p.id);
-          return updated || p;
-      }));
-  };
-
-  // --- Shopping Actions ---
-
-  const toggleShoppingItem = async (id: number) => {
-      const item = shoppingList.find(i => i.id === id);
-      if (item) {
-          const updated = { ...item, checked: !item.checked };
-          await storage.saveShoppingItem(updated);
-          setShoppingList(prev => prev.map(i => i.id === id ? updated : i));
-      }
-  };
-
-  const updateShoppingItemCategory = async (id: number, newCategory: string) => {
-      const item = shoppingList.find(i => i.id === id);
-      if (item) {
-          const updated = { ...item, category: newCategory };
-          await storage.saveShoppingItem(updated);
-          setShoppingList(prev => prev.map(i => i.id === id ? updated : i));
-      }
+  const handleAddShoppingItem = async (name: string) => {
+      const newItem: ShoppingItem = {
+          id: Date.now(),
+          item_name: name,
+          quantity: 1,
+          unit: 'pc',
+          category: 'Other',
+          checked: false,
+          is_manually_added: true,
+          lang: settings.language // Store the current language for this item
+      };
+      const newItems = [...shoppingItems, newItem];
+      setShoppingItems(newItems);
+      await storage.saveShoppingItem(newItem);
   };
 
   const handleUpdateShoppingItem = async (id: number, updates: Partial<ShoppingItem>) => {
-      const item = shoppingList.find(i => i.id === id);
-      if (!item) return;
+      let newItem: ShoppingItem | undefined;
+      const newItems = shoppingItems.map(i => {
+          if (i.id === id) {
+              newItem = { ...i, ...updates };
+              return newItem;
+          }
+          return i;
+      });
+      setShoppingItems(newItems);
+      if (newItem) await storage.saveShoppingItem(newItem);
+  };
+
+  const handleUpdateCategory = async (id: number, category: string) => {
+      handleUpdateShoppingItem(id, { category });
+  };
+  
+  const handleClearChecked = async () => {
+      const toKeep = shoppingItems.filter(i => !i.checked);
+      const toDelete = shoppingItems.filter(i => i.checked);
       
-      // If we rename an item manually, clear its translation cache
-      const shouldClearCache = updates.item_name && updates.item_name !== item.item_name;
-      const updated = { 
-          ...item, 
-          ...updates,
-          translations: shouldClearCache ? {} : item.translations 
-      };
-      
-      if ('quantity' in updates && (updates.quantity || 0) <= 0) {
-          await storage.deleteShoppingItem(id);
-          setShoppingList(prev => prev.filter(i => i.id !== id));
-      } else {
-          await storage.saveShoppingItem(updated);
-          setShoppingList(prev => prev.map(i => i.id === id ? updated : i));
+      setShoppingItems(toKeep);
+      for (const item of toDelete) {
+          await storage.deleteShoppingItem(item.id);
       }
   };
 
-  const addShoppingItem = async (name: string) => {
-      const normalizedName = name.trim();
-      const existing = shoppingList.find(i => i.item_name.toLowerCase() === normalizedName.toLowerCase());
+  // --- Settings Actions ---
+  const handleUpdateSettings = async (newSettings: AppSettings) => {
+      setSettings(newSettings);
+      await storage.saveSettings(newSettings);
+  };
+
+  const handleClearStats = async () => {
+      // Clear past meals
+      const today = new Date().toISOString().split('T')[0];
+      const futurePlan = plan.filter(p => p.date >= today);
+      setPlan(futurePlan);
+      await storage.clearPlan();
+      for (const p of futurePlan) await storage.savePlanItem(p);
+  };
+  
+  const handleClearReviews = async () => {
+      const cleanPlan = plan.map(p => ({ ...p, rating: undefined, rating_comment: undefined, is_cooked: false }));
+      setPlan(cleanPlan);
+      // Batch update
+      await storage.clearPlan();
+      for (const p of cleanPlan) await storage.savePlanItem(p);
+  };
+
+  // --- Swipe Navigation Logic ---
+
+  const onTouchStart = (e: React.TouchEvent) => {
+      touchEndX.current = null;
+      touchEndY.current = null;
+      touchStartX.current = e.targetTouches[0].clientX;
+      touchStartY.current = e.targetTouches[0].clientY;
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+      touchEndX.current = e.targetTouches[0].clientX;
+      touchEndY.current = e.targetTouches[0].clientY;
+  };
+
+  const onTouchEnd = () => {
+      if (!touchStartX.current || !touchEndX.current || !touchStartY.current || !touchEndY.current) return;
       
-      if (existing) {
-          const updated = { ...existing, quantity: existing.quantity + 1, checked: false };
-          await storage.saveShoppingItem(updated);
-          setShoppingList(prev => prev.map(i => i.id === existing.id ? updated : i));
-      } else {
-          const newItem: ShoppingItem = {
-              id: Date.now(),
-              item_name: normalizedName,
-              quantity: 1,
-              unit: 'pc',
-              category: 'Other',
-              checked: false,
-              is_manually_added: true,
-              lang: settings.language,
-              translations: {}
-          };
-          await storage.saveShoppingItem(newItem);
-          setShoppingList(prev => [newItem, ...prev]);
+      const distanceX = touchStartX.current - touchEndX.current;
+      const distanceY = touchStartY.current - touchEndY.current;
+      
+      // If vertical movement is greater than horizontal, assume scrolling and do nothing
+      if (Math.abs(distanceY) > Math.abs(distanceX)) return;
+
+      const isLeftSwipe = distanceX > minSwipeDistance;
+      const isRightSwipe = distanceX < -minSwipeDistance;
+
+      const currentIndex = TABS.indexOf(activeView);
+
+      if (isLeftSwipe && currentIndex < TABS.length - 1) {
+          changeView(TABS[currentIndex + 1]);
+      }
+
+      if (isRightSwipe && currentIndex > 0) {
+          changeView(TABS[currentIndex - 1]);
       }
   };
 
-  const clearCheckedItems = async () => {
-      const toRemove = shoppingList.filter(i => i.checked);
-      for (const item of toRemove) await storage.deleteShoppingItem(item.id);
-      setShoppingList(prev => prev.filter(i => !i.checked));
-  };
-
-  // Nav Item Component
-  const NavItem = ({ viewName, icon: Icon, label }: { viewName: ViewState, icon: React.ElementType, label: string }) => (
-    <button 
-      onClick={() => setView(viewName)}
-      className={`flex flex-col items-center justify-center w-full py-3 transition-colors ${view === viewName ? 'text-nordic-primary' : 'text-gray-400 hover:text-gray-600'}`}
-    >
-      <Icon className={`w-6 h-6 mb-1 ${view === viewName ? 'stroke-[2.5px]' : 'stroke-2'}`} />
-      <span className="text-[10px] font-medium">{label}</span>
-    </button>
-  );
-
-  if (!isLoaded) {
+  if (loading) {
       return (
-          <div className="min-h-screen flex items-center justify-center bg-nordic-bg text-nordic-primary">
-              <div className="flex flex-col items-center gap-3 animate-pulse">
-                  <Icons.Sparkles className="w-10 h-10" />
-                  <p className="font-bold">{t.loading}</p>
-              </div>
+          <div className="min-h-screen bg-nordic-bg flex items-center justify-center text-nordic-muted animate-pulse">
+              <Icons.Sparkles className="w-8 h-8 mr-2" />
+              {t?.loading || "Loading..."}
           </div>
       );
   }
 
+  // Animation classes based on direction
+  const animClass = slideDir === 'right' ? 'animate-slide-in-right' : 'animate-slide-in-left';
+
   return (
-    <div className="min-h-screen bg-nordic-bg font-sans max-w-md mx-auto shadow-2xl overflow-hidden relative border-x border-gray-100">
-      
-      <main className="h-screen overflow-y-auto no-scrollbar p-3">
-        {view === 'plan' && (
-            <PlanView 
-                plan={plan} 
-                recipes={recipes} 
-                onGenerate={handleRegeneratePlan} 
-                onRateMeal={handleRateMeal}
-                onAddMeal={handleAddMeal}
-                onRemoveMeal={handleRemoveMeal}
-                onMoveMeal={handleMoveMeal}
-                onReorderMeal={handleReorderMeal}
-                onSelectRecipe={(r, m) => setSelectedContext({ recipe: r, meal: m })}
-                onUndo={handleUndo}
-                canUndo={planHistory.length > 0}
-                t={t}
-                language={settings.language}
-            />
-        )}
-        {view === 'shop' && (
-            <ShopView 
-                items={shoppingList}
-                plan={plan}
-                recipes={recipes}
-                settings={settings}
-                onToggleItem={toggleShoppingItem} 
-                onAddItem={addShoppingItem}
-                onUpdateCategory={updateShoppingItemCategory}
-                onUpdateItem={handleUpdateShoppingItem}
-                onClearChecked={clearCheckedItems}
-                language={settings.language}
-                t={t}
-            />
-        )}
-        {view === 'recipes' && (
-            <RecipesView 
-                recipes={recipes} 
-                plan={plan}
-                onAddRecipe={handleAddRecipe} 
-                onUpdateRecipe={handleUpdateRecipe}
-                onDeleteRecipe={handleDeleteRecipe}
-                onAddMeal={handleAddMeal}
-                onSelectRecipe={(r) => setSelectedContext({ recipe: r })}
-                t={t}
-                language={settings.language}
-            />
-        )}
-        {view === 'stats' && (
-            <StatsView 
-                plan={plan} 
-                recipes={recipes} 
-                t={t}
-                language={settings.language}
-            />
-        )}
-        {view === 'settings' && (
-            <SettingsView 
-                settings={settings} 
-                onUpdate={handleUpdateSettings} 
-                recipes={recipes}
-                plan={plan}
-                onUpdateRecipes={handleBulkUpdateRecipes}
-                onClearStats={handleClearStats}
-                onClearReviews={handleClearReviews}
-                t={t}
-            />
+    <div className="h-[100dvh] bg-nordic-bg text-slate-800 font-sans selection:bg-teal-100 overflow-hidden flex flex-row">
+      {/* Desktop Sidebar */}
+      <nav className="hidden md:flex flex-col w-64 bg-white border-r border-gray-100 p-4 shrink-0 z-20 shadow-sm">
+          <div className="flex items-center gap-3 px-2 mb-8 mt-2">
+              <div className="w-8 h-8 bg-nordic-primary rounded-lg flex items-center justify-center text-white">
+                  <Icons.Shop className="w-5 h-5" />
+              </div>
+              <h1 className="font-bold text-lg text-nordic-secondary tracking-tight">HomeChef Hub</h1>
+          </div>
+          
+          <div className="space-y-1 flex-1">
+              {TABS.map(tab => {
+                  const isActive = activeView === tab;
+                  let Icon = Icons.Plan;
+                  let label = t.nav_plan;
+                  if (tab === 'shop') { Icon = Icons.Shop; label = t.nav_shop; }
+                  if (tab === 'recipes') { Icon = Icons.Recipes; label = t.nav_recipes; }
+                  if (tab === 'stats') { Icon = Icons.Chart; label = t.nav_stats; }
+                  if (tab === 'settings') { Icon = Icons.Settings; label = t.nav_settings; }
+
+                  return (
+                      <button
+                          key={tab}
+                          onClick={() => changeView(tab)}
+                          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-all ${
+                              isActive 
+                              ? 'bg-nordic-primary text-white shadow-md shadow-teal-900/10' 
+                              : 'text-gray-500 hover:bg-gray-50 hover:text-nordic-text'
+                          }`}
+                      >
+                          <Icon className={`w-5 h-5 ${isActive ? 'text-white' : 'text-gray-400'}`} />
+                          {label}
+                      </button>
+                  );
+              })}
+          </div>
+          <div className="text-xs text-gray-300 px-2 mt-4 text-center">
+              v0.2.5
+          </div>
+      </nav>
+
+      {/* Main Content Area */}
+      <main 
+        className="flex-1 flex flex-col h-[100dvh] overflow-hidden relative"
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+      >
+        <div className="flex-1 overflow-y-auto no-scrollbar pt-6 px-4 md:px-8 md:pt-8 overflow-x-hidden">
+            <div key={activeView} className={`min-h-full max-w-7xl mx-auto w-full ${animClass}`}>
+                {activeView === 'plan' && (
+                    <PlanView 
+                        plan={plan}
+                        recipes={recipes}
+                        onGenerate={handleGeneratePlan}
+                        onRateMeal={handleRateMeal}
+                        onAddMeal={handleAddMeal}
+                        onMoveMeal={handleMoveMeal}
+                        onReorderMeal={handleReorderMeal}
+                        onRemoveMeal={handleRemoveMeal}
+                        onSelectRecipe={(r, m) => { setSelectedRecipe(r); setSelectedMealForDetail(m); }}
+                        onUndo={handleUndoPlan}
+                        canUndo={planHistory.length > 0}
+                        t={t}
+                        language={settings.language}
+                        settings={settings}
+                    />
+                )}
+
+                {activeView === 'shop' && (
+                    <ShopView 
+                        items={shoppingItems}
+                        plan={plan}
+                        recipes={recipes}
+                        settings={settings}
+                        onToggleItem={handleToggleItem}
+                        onAddItem={handleAddShoppingItem}
+                        onUpdateCategory={handleUpdateCategory}
+                        onUpdateItem={handleUpdateShoppingItem}
+                        onClearChecked={handleClearChecked}
+                        language={settings.language}
+                        t={t}
+                    />
+                )}
+
+                {activeView === 'recipes' && (
+                    <RecipesView 
+                        recipes={recipes}
+                        plan={plan}
+                        onAddRecipe={handleAddRecipe}
+                        onUpdateRecipe={handleUpdateRecipe}
+                        onDeleteRecipe={handleDeleteRecipe}
+                        onAddMeal={handleAddMeal}
+                        onSelectRecipe={(r) => { setSelectedRecipe(r); setSelectedMealForDetail(undefined); }}
+                        t={t}
+                        language={settings.language}
+                    />
+                )}
+
+                {activeView === 'stats' && (
+                    <StatsView 
+                        plan={plan}
+                        recipes={recipes}
+                        t={t}
+                        language={settings.language}
+                    />
+                )}
+
+                {activeView === 'settings' && (
+                    <SettingsView 
+                        settings={settings}
+                        onUpdate={handleUpdateSettings}
+                        recipes={recipes}
+                        plan={plan}
+                        onUpdateRecipes={handleUpdateAllRecipes}
+                        onClearStats={handleClearStats}
+                        onClearReviews={handleClearReviews}
+                        t={t}
+                    />
+                )}
+            </div>
+        </div>
+
+        {/* Bottom Nav (Mobile Only) */}
+        <nav className="md:hidden shrink-0 bg-white border-t border-gray-100 px-6 py-3 flex justify-between items-center z-50 pb-safe">
+            <button onClick={() => changeView('plan')} className={`flex flex-col items-center gap-1 transition-colors ${activeView === 'plan' ? 'text-nordic-primary' : 'text-gray-400'}`}>
+                <Icons.Plan className="w-6 h-6" />
+                <span className="text-[10px] font-medium">{t.nav_plan}</span>
+            </button>
+            <button onClick={() => changeView('shop')} className={`flex flex-col items-center gap-1 transition-colors ${activeView === 'shop' ? 'text-nordic-primary' : 'text-gray-400'}`}>
+                <Icons.Shop className="w-6 h-6" />
+                <span className="text-[10px] font-medium">{t.nav_shop}</span>
+            </button>
+            <button onClick={() => changeView('recipes')} className={`flex flex-col items-center gap-1 transition-colors ${activeView === 'recipes' ? 'text-nordic-primary' : 'text-gray-400'}`}>
+                <Icons.Recipes className="w-6 h-6" />
+                <span className="text-[10px] font-medium">{t.nav_recipes}</span>
+            </button>
+            <button onClick={() => changeView('stats')} className={`flex flex-col items-center gap-1 transition-colors ${activeView === 'stats' ? 'text-nordic-primary' : 'text-gray-400'}`}>
+                <Icons.Chart className="w-6 h-6" />
+                <span className="text-[10px] font-medium">{t.nav_stats}</span>
+            </button>
+            <button onClick={() => changeView('settings')} className={`flex flex-col items-center gap-1 transition-colors ${activeView === 'settings' ? 'text-nordic-primary' : 'text-gray-400'}`}>
+                <Icons.Settings className="w-6 h-6" />
+                <span className="text-[10px] font-medium">{t.nav_settings}</span>
+            </button>
+        </nav>
+
+        {/* Detail Modal */}
+        {selectedRecipe && (
+            <div className="absolute inset-0 z-50 animate-in slide-in-from-bottom-10 duration-300">
+                <RecipeDetail 
+                    recipe={selectedRecipe}
+                    recipes={recipes}
+                    meal={selectedMealForDetail}
+                    plan={plan}
+                    settings={settings}
+                    onClose={() => setSelectedRecipe(null)}
+                    onUpdateRecipe={handleUpdateRecipe}
+                    onUpdateServings={handleUpdateServings}
+                    onAddMeal={handleAddMeal}
+                    onRateMeal={handleRateMeal}
+                    t={t}
+                    language={settings.language}
+                />
+            </div>
         )}
       </main>
-
-      {/* Shared Recipe Detail Modal/Cooking View */}
-      {selectedContext && (
-        <RecipeDetail 
-            recipe={selectedContext.recipe}
-            meal={selectedContext.meal}
-            recipes={recipes}
-            plan={plan}
-            settings={settings}
-            onClose={() => setSelectedContext(null)}
-            onUpdateRecipe={handleUpdateRecipe}
-            onUpdateServings={handleUpdateServings}
-            onAddMeal={handleAddMeal}
-            onRateMeal={handleRateMeal}
-            t={t}
-            language={settings.language}
-        />
-      )}
-
-      {/* Bottom Navigation */}
-      <nav className="absolute bottom-0 left-0 right-0 bg-white/80 backdrop-blur-lg border-t border-gray-200 flex justify-around pb-safe pt-1 z-10">
-        <NavItem viewName="plan" icon={Icons.Plan} label={t.nav_plan} />
-        <NavItem viewName="shop" icon={Icons.Shop} label={t.nav_shop} />
-        <NavItem viewName="recipes" icon={Icons.Recipes} label={t.nav_recipes} />
-        <NavItem viewName="stats" icon={Icons.Chart} label={t.nav_stats} />
-        <NavItem viewName="settings" icon={Icons.Settings} label={t.nav_settings} />
-      </nav>
-      
     </div>
   );
 };

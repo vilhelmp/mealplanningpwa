@@ -99,6 +99,7 @@ export interface AppSettings {
   language: string; // Changed from enum to string to support any code
   default_adults: number;
   default_kids: number;
+  week_start_day: number; // 0 = Sunday, 1 = Monday, 6 = Saturday
   pantry_staples: string[];
   custom_staples?: Record<string, string[]>; // Cache for staples per language
   stores: Store[];

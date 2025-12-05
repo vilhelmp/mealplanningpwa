@@ -9,7 +9,7 @@ interface ShopViewProps {
   plan: MealPlanItem[];
   recipes: Recipe[];
   settings: AppSettings;
-  onToggleItem: (id: number) => void;
+  onToggleItem: (item: ShoppingItem) => void;
   onAddItem: (name: string) => void;
   onUpdateCategory: (id: number, category: string) => void;
   onUpdateItem: (id: number, updates: Partial<ShoppingItem>) => void;
@@ -170,7 +170,7 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
     if (catItems.length === 0) return null;
 
     return (
-      <div key={cat} className="mb-3">
+      <div key={cat} className="mb-3 break-inside-avoid">
         <h3 className="text-[10px] font-bold text-nordic-muted uppercase tracking-wider mb-1 px-1">{getCategoryLabel(cat)}</h3>
         <Card className="divide-y divide-gray-100">
           {catItems.map(item => {
@@ -241,7 +241,7 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
                             onPointerCancel={handlePointerUp}
                             onClick={() => {
                                 if (!isLongPress.current) {
-                                    onToggleItem(item.id);
+                                    onToggleItem(item);
                                 }
                             }}
                             onContextMenu={(e: any) => e.preventDefault()}
@@ -313,7 +313,7 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
   };
 
   return (
-    <div className="pb-24 space-y-3">
+    <div className="pb-24 md:pb-4 space-y-3">
        <div className="flex items-center justify-between px-1">
         <div className="flex items-baseline gap-2">
           <h1 className="text-xl font-bold text-nordic-text">{t.shop_title}</h1>
@@ -379,7 +379,7 @@ export const ShopView: React.FC<ShopViewProps> = ({ items, plan, recipes, settin
         </Button>
       </form>
 
-      <div className="space-y-1">
+      <div className="space-y-1 md:columns-2 lg:columns-3 md:gap-4 md:space-y-3">
         {activeCategories.map(cat => renderCategory(cat))}
       </div>
       

@@ -221,7 +221,16 @@ export const estimateNutrition = async (ingredients: Ingredient[]): Promise<Nutr
   const settings = await storage.getSettings();
   const provider = settings.ai_provider || 'gemini';
   const ingredientsList = ingredients.map(i => `${i.quantity} ${i.unit} ${i.item_name}`).join(', ');
-  const prompt = `Based on the following ingredients, estimate the nutritional values per 100g. Ingredients: ${ingredientsList}. Return raw numbers.`;
+  
+  const prompt = `
+    Based on the following ingredients list for a recipe: ${ingredientsList}.
+    Estimate the nutritional values PER 100g of the final cooked dish.
+    
+    IMPORTANT CONSTRAINTS:
+    1. The 'fat' value MUST be approximately equal to the sum of 'saturated_fat' and 'unsaturated_fat'.
+    2. If 'Salt', 'Sodium' or similar is listed in the ingredients, the 'salt' field MUST NOT be 0. Estimate it based on the quantity (e.g. 1 tsp salt is approx 6g salt).
+    3. Return raw numbers only (no units).
+  `;
 
   if (provider === 'openai' && settings.openai_api_key) {
       const systemPrompt = `Return JSON only: { "calories": number, "protein": number, "carbs": number, "sugar": number, "fat": number, "saturated_fat": number, "unsaturated_fat": number, "fiber": number, "salt": number }`;

@@ -82,6 +82,9 @@ export const Icons = {
   ),
   List: ({ className }: { className?: string }) => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+  ),
+  Filter: ({ className }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
   )
 };
 
@@ -127,7 +130,7 @@ export const Input = (props: any) => (
     />
 );
 
-export const Modal = ({ isOpen, onClose, title, children, padding = "p-6" }: any) => {
+export const Modal = ({ isOpen, onClose, title, children, padding = "p-6", maxWidth = "max-w-md" }: any) => {
     useEffect(() => {
         const handleEsc = (e: KeyboardEvent) => {
             if (e.key === 'Escape') onClose();
@@ -142,9 +145,9 @@ export const Modal = ({ isOpen, onClose, title, children, padding = "p-6" }: any
 
     if (!isOpen) return null;
     return (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 sm:p-6">
+        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-12 sm:items-center sm:p-6 sm:pt-6">
             <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={onClose} />
-            <div className={`relative bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-10 sm:slide-in-from-bottom-4 duration-300 max-h-[90vh] overflow-y-auto ${padding}`}>
+            <div className={`relative bg-white w-full ${maxWidth} rounded-3xl shadow-2xl animate-in slide-in-from-top-10 duration-300 max-h-[85vh] overflow-y-auto ${padding}`}>
                 {title && (
                     <div className="flex items-center justify-between mb-6">
                         <h2 className="text-xl font-bold text-nordic-text">{title}</h2>

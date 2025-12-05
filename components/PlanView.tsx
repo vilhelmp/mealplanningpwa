@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { MealPlanItem, Recipe, Language } from '../types';
+import { MealPlanItem, Recipe, Language, AppSettings } from '../types';
 import { Card, Button, Icons, Modal, Input } from './Shared';
 
 interface PlanViewProps {
   plan: MealPlanItem[];
   recipes: Recipe[];
-  onGenerate: () => void;
+  onGenerate: (viewStart: string) => void;
   onRateMeal: (id: number, rating: number, comment?: string) => void;
   onAddMeal: (date: string, recipeId: number) => void;
   onMoveMeal: (date: string, direction: 'up' | 'down') => void;
@@ -17,6 +17,7 @@ interface PlanViewProps {
   canUndo: boolean;
   t: any; // Translation dictionary
   language: string;
+  settings?: AppSettings;
 }
 
 interface DragState {
@@ -35,7 +36,15 @@ interface DragState {
     draggedMeal?: MealPlanItem;
 }
 
-export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, onRateMeal, onAddMeal, onMoveMeal, onReorderMeal, onRemoveMeal, onSelectRecipe, onUndo, canUndo, t, language }) => {
+// Helper to format date as YYYY-MM-DD using local time
+const formatLocalDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, onRateMeal, onAddMeal, onMoveMeal, onReorderMeal, onRemoveMeal, onSelectRecipe, onUndo, canUndo, t, language, settings }) => {
   const [ratingItem, setRatingItem] = useState<MealPlanItem | null>(null);
   const [ratingValue, setRatingValue] = useState(0);
   const [ratingComment, setRatingComment] = useState('');
@@ -43,8 +52,26 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
   const [addingToDate, setAddingToDate] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   
-  // Navigation State
-  const [viewStartDate, setViewStartDate] = useState(new Date());
+  // Helper to calculate the start of the week relative to a date (Local Time)
+  const getStartOfWeek = (date: Date, startDay: number = 1) => {
+      const d = new Date(date);
+      d.setHours(0, 0, 0, 0); // Normalize to local midnight first
+      const day = d.getDay(); // 0 (Sun) to 6 (Sat)
+      
+      const diff = (day < startDay ? 7 : 0) + day - startDay;
+      d.setDate(d.getDate() - diff);
+      return d;
+  };
+
+  const weekStartDay = settings?.week_start_day ?? 1; // Default Monday
+
+  // Navigation State - Initialize to the start of the CURRENT week
+  const [viewStartDate, setViewStartDate] = useState(() => getStartOfWeek(new Date(), weekStartDay));
+
+  // Reset view if setting changes
+  useEffect(() => {
+     setViewStartDate(getStartOfWeek(new Date(), weekStartDay));
+  }, [weekStartDay]);
 
   // Drag State
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -55,16 +82,19 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
   const isDatePast = (dateStr: string) => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      const target = new Date(dateStr);
-      target.setHours(0, 0, 0, 0);
+      
+      // Parse local YYYY-MM-DD
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const target = new Date(y, m - 1, d);
+      
       return target < today;
   };
 
-  // Generate 7 days based on viewStartDate
+  // Generate 7 days based on viewStartDate using Local Time formatting
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(viewStartDate);
     d.setDate(viewStartDate.getDate() + i);
-    return d.toISOString().split('T')[0];
+    return formatLocalDate(d);
   });
 
   const changeWeek = (offset: number) => {
@@ -74,7 +104,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
   };
 
   const resetToCurrent = () => {
-      setViewStartDate(new Date());
+      setViewStartDate(getStartOfWeek(new Date(), weekStartDay));
   };
 
   const handleSaveRating = () => {
@@ -178,12 +208,17 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
   // Filter recipes for search
   const filteredRecipes = recipes.filter(r => r.title.toLowerCase().includes(searchTerm.toLowerCase()));
 
-  // Check if we are viewing the current week (approximate check based on if today is in the range)
-  const todayStr = new Date().toISOString().split('T')[0];
+  // Check if we are viewing the current week
+  const todayStr = formatLocalDate(new Date());
   const isCurrentWeekView = days.includes(todayStr);
 
   return (
-    <div className="pb-24 space-y-2">
+    <div className="pb-24 md:pb-4 space-y-2">
+       {/* Title */}
+       <div className="px-1 pt-1">
+          <h1 className="text-xl font-bold text-nordic-text">{t.plan_title}</h1>
+       </div>
+
        {/* Compact Header with Navigation */}
        <div className="flex items-center justify-between px-1 mb-2">
         <div className="flex items-center gap-2">
@@ -191,7 +226,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
                 <Icons.ArrowLeft className="w-3.5 h-3.5" />
             </Button>
             <Button onClick={resetToCurrent} variant="ghost" className={`!px-2 text-xs h-8 font-bold ${isCurrentWeekView ? 'text-nordic-primary' : 'text-gray-500'}`}>
-                {isCurrentWeekView ? t.currentWeek : days[0]}
+                {isCurrentWeekView ? t.currentWeek : `${new Date(days[0]).toLocaleDateString(language, { month: 'short', day: 'numeric' })} - ${new Date(days[6]).toLocaleDateString(language, { month: 'short', day: 'numeric' })}`}
             </Button>
             <Button onClick={() => changeWeek(1)} variant="secondary" className="!p-2 text-xs h-8">
                 <Icons.ArrowRight className="w-3.5 h-3.5" />
@@ -201,13 +236,13 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
             <Button onClick={onUndo} disabled={!canUndo} variant="secondary" className="!p-2 text-xs h-8">
                <Icons.Undo className="w-3.5 h-3.5" />
             </Button>
-            <Button onClick={onGenerate} variant="secondary" className="!p-2 text-xs h-8">
+            <Button onClick={() => onGenerate(days[0])} variant="secondary" className="!p-2 text-xs h-8">
                <Icons.Sparkles className="w-3.5 h-3.5 text-nordic-accent" /> {t.generate}
             </Button>
         </div>
       </div>
 
-      <div className="space-y-2 select-none">
+      <div className="space-y-2 select-none md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 md:gap-4">
         {days.map((date, index) => {
             const meal = plan.find(p => p.date === date);
             const recipe = meal ? recipes.find(r => r.id === meal.recipe_id) : null;
@@ -215,10 +250,13 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
             const isBeingDragged = dragState?.originalDate === date;
             const isPast = isDatePast(date);
 
-            const dateObj = new Date(date);
+            // Parse locally for display
+            const [y,m,d] = date.split('-').map(Number);
+            const dateObj = new Date(y, m-1, d);
+            
             const weekday = dateObj.toLocaleDateString(language, { weekday: 'short' }).toUpperCase().replace('.', '');
             const dayNum = dateObj.getDate();
-            const isToday = new Date().toDateString() === dateObj.toDateString();
+            const isToday = todayStr === date;
 
             return (
                 <div 
@@ -226,9 +264,9 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
                     className={`relative rounded-2xl transition-all duration-200 ${isHovered ? 'ring-2 ring-nordic-primary ring-offset-2' : ''} ${isPast ? 'grayscale opacity-75' : ''}`}
                     data-plan-date={date}
                 >
-                    <div className="flex items-stretch gap-2">
+                    <div className="flex items-stretch gap-2 md:h-full md:bg-white md:p-2 md:rounded-xl md:border md:border-gray-100 md:shadow-sm">
                         {/* Compact Date Column */}
-                        <div className={`flex flex-col items-center justify-center w-12 rounded-xl flex-shrink-0 border transition-all h-16 ${isToday ? 'bg-nordic-primary text-white shadow-md border-transparent' : 'bg-white text-gray-400 border-gray-100'}`}>
+                        <div className={`flex flex-col items-center justify-center w-12 rounded-xl flex-shrink-0 border transition-all h-16 md:h-full ${isToday ? 'bg-nordic-primary text-white shadow-md border-transparent' : 'bg-white text-gray-400 border-gray-100 md:bg-gray-50'}`}>
                             <span className="text-[9px] font-bold tracking-wider opacity-80">{weekday}</span>
                             <span className="text-lg font-bold leading-none">{dayNum}</span>
                         </div>
@@ -244,11 +282,8 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
                                     className={`h-full transition-opacity duration-200 ${isBeingDragged ? 'opacity-30' : 'opacity-100'}`}
                                 >
                                     <Card 
-                                        className="h-full flex flex-col justify-center relative group cursor-pointer active:scale-[0.99] transition-transform shadow-none border-gray-200 hover:border-nordic-primary/50" 
+                                        className="h-full flex flex-col justify-center relative group cursor-pointer active:scale-[0.99] transition-transform shadow-none border-gray-200 hover:border-nordic-primary/50 md:shadow-none md:border-transparent" 
                                         onClick={() => {
-                                            // Only allow selecting recipe if not past, OR if it's just viewing details.
-                                            // The detail modal handles edit restrictions internally if we passed that info, 
-                                            // but for now we just allow viewing.
                                             if (!dragState) onSelectRecipe(recipe, meal);
                                         }}
                                     >
@@ -268,13 +303,13 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
                                                         <div className="flex gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                                                             <button 
                                                                 onClick={(e) => { e.stopPropagation(); onMoveMeal(date, 'up'); }} 
-                                                                className="text-gray-400 hover:text-nordic-primary p-1 rounded-full hover:bg-gray-50"
+                                                                className="text-gray-400 hover:text-nordic-primary p-1 rounded-full hover:bg-gray-50 md:hidden"
                                                             >
                                                                 <Icons.ChevronUp className="w-3.5 h-3.5" />
                                                             </button>
                                                             <button 
                                                                 onClick={(e) => { e.stopPropagation(); onMoveMeal(date, 'down'); }} 
-                                                                className="text-gray-400 hover:text-nordic-primary p-1 rounded-full hover:bg-gray-50"
+                                                                className="text-gray-400 hover:text-nordic-primary p-1 rounded-full hover:bg-gray-50 md:hidden"
                                                             >
                                                                 <Icons.ChevronDown className="w-3.5 h-3.5" />
                                                             </button>
@@ -325,14 +360,14 @@ export const PlanView: React.FC<PlanViewProps> = ({ plan, recipes, onGenerate, o
                                 !isPast ? (
                                     <button 
                                         onClick={() => setAddingToDate(date)}
-                                        className="w-full h-16 rounded-xl border-2 border-dashed border-gray-100 text-gray-300 hover:border-nordic-primary hover:text-nordic-primary transition-all flex items-center justify-center gap-2 bg-white/50"
+                                        className="w-full h-16 md:h-full rounded-xl border-2 border-dashed border-gray-100 text-gray-300 hover:border-nordic-primary hover:text-nordic-primary transition-all flex items-center justify-center gap-2 bg-white/50"
                                     >
                                         <Icons.Plus className="w-4 h-4" />
                                         <span className="font-medium text-xs">{t.addMeal}</span>
                                     </button>
                                 ) : (
-                                    <div className="w-full h-16 rounded-xl border border-gray-100 bg-gray-50 flex items-center justify-center">
-                                        <span className="text-xs text-gray-400 italic">{t.emptySlot}</span>
+                                    <div className="w-full h-16 md:h-full rounded-xl border border-gray-100 bg-gray-50 flex items-center justify-center">
+                                        <span className="text-xs text-gray-400 italic">{t.datePassed || "Date passed, no meal"}</span>
                                     </div>
                                 )
                             )}
